@@ -1,97 +1,158 @@
-import Header from '@/components/Header';
+import Link from 'next/link';
+import { Suspense } from 'react';
+import Hero from '@/components/Hero';
+import UnitSwitcher from '@/components/UnitSwitcher';
+import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
-import { brl, pct } from '@/lib/format';
+import { brl, brlCurto, num, pct } from '@/lib/format';
+import { hoje, ontem, inicioDoMes, saudacao } from '@/lib/date';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Dashboard({ searchParams }: { searchParams: { u?: string } }) {
-  const u = searchParams.u || 'all';
   const supabase = createClient();
-
   const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
-  const alvo = unidades?.find((x) => x.codigo === u);
-  const hoje = new Date().toISOString().slice(0, 10);
+  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
 
-  // Vendas de hoje
-  let vq = supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hoje);
-  if (alvo) vq = vq.eq('unidade_id', alvo.id);
-  const { data: vendas } = await vq;
-  const faturamento = (vendas || []).reduce((s, x) => s + Number(x.valor_total), 0);
-  const pedidos = (vendas || []).reduce((s, x) => s + Number(x.quantidade), 0);
-  const ticket = pedidos ? faturamento / pedidos : 0;
+  const hj = hoje();
+  const ont = ontem();
+  const desde = inicioDoMes();
+  const porUnidadeDe = (q: any) => (alvo ? q.eq('unidade_id', alvo.id) : q);
 
-  // Valor em estoque
-  let veq = supabase.from('v_valor_estoque').select('*');
-  if (alvo) veq = veq.eq('unidade_id', alvo.id);
-  const { data: valorEst } = await veq;
-  const valorEstoque = (valorEst || []).reduce((s, x) => s + Number(x.valor_total), 0);
+  const [
+    { data: user },
+    { data: vHoje },
+    { data: vOntem },
+    { data: vMes },
+    { data: custos },
+    { data: valorEst },
+    { data: alertas },
+  ] = await Promise.all([
+    supabase.auth.getUser().then((r) => ({ data: r.data.user })),
+    porUnidadeDe(supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hj)),
+    porUnidadeDe(supabase.from('vendas').select('valor_total').eq('data_venda', ont)),
+    porUnidadeDe(supabase.from('vendas').select('produto_id, quantidade, valor_total').gte('data_venda', desde)),
+    supabase.from('v_custo_produto').select('produto_id, custo_total'),
+    porUnidadeDe(supabase.from('v_valor_estoque').select('*')),
+    porUnidadeDe(supabase.from('v_alertas_estoque').select('*').neq('status', 'ok')),
+  ]);
 
-  // Alertas
-  let aq = supabase.from('v_alertas_estoque').select('*').neq('status', 'ok');
-  if (alvo) aq = aq.eq('unidade_id', alvo.id);
-  const { data: alertas } = await aq;
+  const faturamento = (vHoje || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+  const itens = (vHoje || []).reduce((s: number, x: any) => s + Number(x.quantidade), 0);
+  const fatOntem = (vOntem || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+  const porItem = itens ? faturamento / itens : 0;
 
-  // Split por unidade (só no consolidado)
-  const porUnidade = !alvo
-    ? (unidades || []).map((un) => {
-        const fv = (vendas || []).filter((v) => v.unidade_id === un.id).reduce((s, x) => s + Number(x.valor_total), 0);
-        return { ...un, fat: fv };
-      })
-    : [];
-  const totalFat = porUnidade.reduce((s, x) => s + x.fat, 0) || 1;
+  const custoDe = new Map((custos || []).map((c: any) => [c.produto_id, Number(c.custo_total)]));
+  const fatMes = (vMes || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+  const custoMes = (vMes || []).reduce((s: number, x: any) => s + (custoDe.get(x.produto_id) || 0) * Number(x.quantidade), 0);
+  const cmv = fatMes ? (custoMes / fatMes) * 100 : 0;
 
-  const statusCor: Record<string, string> = { critico: '#e63946', sem_estoque: '#e63946', baixo: '#f4a261' };
+  const valorEstoque = (valorEst || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+
+  const porUnidade = alvo
+    ? []
+    : (unidades || []).map((un) => ({
+        ...un,
+        fat: (vHoje || []).filter((v: any) => v.unidade_id === un.id).reduce((s: number, x: any) => s + Number(x.valor_total), 0),
+      }));
+  const totalFat = porUnidade.reduce((s, x) => s + x.fat, 0);
+
+  const primeiroNome = String(user?.user_metadata?.nome || user?.email || '').split(/[\s@]/)[0];
+  const qtdUnidades = unidades?.length || 0;
+  const linkEstoque = alvo ? `/estoque?u=${alvo.codigo}` : '/estoque';
 
   return (
     <>
-      <Header sub={alvo ? alvo.nome : 'Todas as unidades'} />
+      <Hero
+        saudacao={`${saudacao()}${primeiroNome ? `, ${primeiroNome}` : ''} · ${alvo ? alvo.nome : `${qtdUnidades} unidades`}`}
+        faturamento={faturamento}
+        ontem={fatOntem}
+        itens={itens}
+      />
+
+      <Suspense fallback={<div className="useg" />}>
+        <UnitSwitcher unidades={unidades || []} />
+      </Suspense>
+
       <div className="wrap">
-        <div className="sec-t">Resumo de hoje</div>
-        <div className="kg">
-          <div className="kpi r"><div className="kl">💰 Faturamento</div><div className="kv">{brl(faturamento)}</div><div className="kd">Hoje</div></div>
-          <div className="kpi b"><div className="kl">🏷️ Ticket médio</div><div className="kv">{brl(ticket)}</div><div className="kd">{pedidos} itens</div></div>
-          <div className="kpi o"><div className="kl">📦 Em estoque</div><div className="kv">{brl(valorEstoque)}</div><div className="kd warn">{alertas?.length || 0} alertas</div></div>
-          <div className="kpi g"><div className="kl">🛒 Pedidos hoje</div><div className="kv">{pedidos}</div><div className="kd ok">—</div></div>
+        <div className="lbl">Resumo do dia</div>
+        <div className="krow">
+          <div className="kc">
+            <div className="ki"><IcoCompras size={19} /></div>
+            <div className="kv">{brlCurto(porItem)}</div>
+            <div className="kl">Valor médio por item</div>
+          </div>
+          <div className="kc">
+            <div className="ki"><IcoPedidos size={19} /></div>
+            <div className="kv">{num(itens)}</div>
+            <div className="kl">Itens vendidos hoje</div>
+          </div>
+          <div className="kc">
+            <div className="ki"><IcoCmv size={19} /></div>
+            <div className={'kv ' + (cmv > 0 && cmv <= 35 ? 'grn' : cmv > 35 ? 'red' : '')}>{pct(cmv)}</div>
+            <div className="kl">CMV do mês</div>
+          </div>
         </div>
 
-        {!alvo && porUnidade.length > 0 && (
-          <>
-            <div className="sec-t">Por unidade — hoje</div>
-            <div className="usplit">
-              {porUnidade.map((un) => (
-                <div className="ubox" key={un.id}>
-                  <div className="l"><span className="d" style={{ background: un.cor }} />{un.nome}</div>
-                  <div className="v">{brl(un.fat)}</div>
-                  <div className="s" style={{ color: un.cor }}>{Math.round((un.fat / totalFat) * 100)}% do total</div>
-                  <div className="sbar" style={{ width: '100%', marginTop: 8 }}><div style={{ width: `${(un.fat / totalFat) * 100}%`, background: un.cor }} /></div>
+        <div className={porUnidade.length > 0 ? 'dash' : ''}>
+          <section>
+            <div className="lbl">
+              Estoque
+              <Link href={linkEstoque}>Ver tudo</Link>
+            </div>
+            <div className="panel">
+              <div className="sh">
+                <div className="si"><IcoEstoque size={20} /></div>
+                <div>
+                  <div className="sv">{brl(valorEstoque)}</div>
+                  <div className="sl">Valor total em estoque</div>
                 </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        <div className="sec-t">Alertas de estoque</div>
-        <div className="card"><div className="cb" style={{ paddingTop: 6 }}>
-          {(alertas && alertas.length > 0) ? alertas.map((a: any, i: number) => (
-            <div className="al" key={i}>
-              <div className="al-d" style={{ background: statusCor[a.status] || '#f4a261' }} />
-              <div className="al-b">
-                <strong>{a.ingrediente}</strong>
-                <span>{a.quantidade} {a.unidade_medida} · mín {a.estoque_minimo}</span>
+                <span className={'sbtag' + (alertas?.length ? '' : ' ok')}>
+                  {alertas?.length ? `${alertas.length} ${alertas.length === 1 ? 'alerta' : 'alertas'}` : 'tudo ok'}
+                </span>
               </div>
-              <div className="al-u" style={{ background: 'rgba(230,57,70,.14)', color: '#e63946' }}>{a.unidade_codigo}</div>
-            </div>
-          )) : <div style={{ padding: 14, color: 'var(--t2)', fontSize: 13 }}>Tudo em ordem ✓</div>}
-        </div></div>
 
-        <div className="sec-t">Comparar unidades</div>
-        <a href="/comparativo?u=all" className="card" style={{ display: 'block' }}>
-          <div className="cb" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 16 }}>
-            <div style={{ fontSize: 26 }}>⚖️</div>
-            <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 13.5 }}>Análise comparativa</div><div style={{ fontSize: 11.5, color: 'var(--t2)' }}>Centro vs Norte lado a lado</div></div>
-            <div style={{ color: 'var(--red)', fontSize: 18 }}>→</div>
-          </div>
-        </a>
+              {(alertas || []).length > 0 ? (
+                (alertas || []).slice(0, 6).map((a: any, i: number) => (
+                  <div className="al" key={i}>
+                    <span className="adot" style={{ background: a.status === 'baixo' ? 'var(--gold)' : 'var(--red)' }} />
+                    <div className="ab">
+                      <b>{a.ingrediente}</b>
+                      <span>mín {num(a.estoque_minimo, 2)} {a.unidade_medida}</span>
+                    </div>
+                    <div className="ar">
+                      <div className="aq" style={{ color: a.status === 'baixo' ? 'var(--gold)' : 'var(--red)' }}>
+                        {num(a.quantidade, 2)} {a.unidade_medida}
+                      </div>
+                      {!alvo && <div className="au">{a.unidade_nome}</div>}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="vazio">Nenhum item abaixo do mínimo ✓</div>
+              )}
+            </div>
+          </section>
+
+          {porUnidade.length > 0 && (
+            <section>
+              <div className="lbl">Por unidade — hoje</div>
+              <div className="usplit">
+                {porUnidade.map((un) => {
+                  const share = totalFat ? (un.fat / totalFat) * 100 : 0;
+                  return (
+                    <div className="ub" key={un.id}>
+                      <div className="l"><span className="d" style={{ background: un.cor }} />{un.nome}</div>
+                      <div className="v">{brl(un.fat)}</div>
+                      <div className="bar"><div style={{ width: `${share}%`, background: un.cor }} /></div>
+                      <div className="pct" style={{ color: un.cor }}>{pct(share)} do total</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </>
   );

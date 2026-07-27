@@ -1,5 +1,9 @@
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+
+// `cookies` é uma união de dois formatos no @supabase/ssr, então o TS não
+// consegue inferir o parâmetro sozinho — daí a anotação explícita.
+type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 
 export function createClient() {
   const cookieStore = cookies();
@@ -11,7 +15,7 @@ export function createClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)

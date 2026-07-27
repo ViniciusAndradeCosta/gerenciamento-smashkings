@@ -1,4 +1,4 @@
-import Header from '@/components/Header';
+import TopBar from '@/components/TopBar';
 import { createClient } from '@/lib/supabase/server';
 import { brl, pct } from '@/lib/format';
 
@@ -10,26 +10,52 @@ export default async function Fichas() {
 
   return (
     <>
-      <Header sub="Fichas técnicas" />
+      {/* fichas técnicas são do cardápio, não de uma unidade — sem filtro de unidade */}
+      <TopBar titulo="Fichas técnicas" />
+
       <div className="wrap">
-        <div className="sec-t">Cardápio — custo e margem</div>
-        <div className="card"><div className="cb tscroll" style={{ paddingTop: 8 }}>
-          <table className="tbl">
-            <thead><tr><th>Produto</th><th>Custo</th><th>Venda</th><th>CMV</th><th>Margem</th></tr></thead>
-            <tbody>
-              {(produtos || []).map((p: any) => (
-                <tr key={p.produto_id}>
-                  <td>{p.nome}</td>
-                  <td>{brl(p.custo_total)}</td>
-                  <td>{brl(p.preco_venda)}</td>
-                  <td><span className="tag g">{pct(p.cmv_percent)}</span></td>
-                  <td style={{ color: p.margem_percent >= 65 ? 'var(--green)' : 'var(--gold)', fontWeight: 700 }}>{pct(p.margem_percent)}</td>
+        <div className="lbl">Cardápio — custo e margem</div>
+
+        <div className="panel">
+          <div className="tscroll">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Produto</th><th>Custo</th><th>Venda</th><th>CMV</th><th>Margem</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {(!produtos || produtos.length === 0) && <div style={{ padding: 14, color: 'var(--t2)', fontSize: 13 }}>Nenhum produto cadastrado.</div>}
-        </div></div>
+              </thead>
+              <tbody>
+                {(produtos || []).map((p: any) => {
+                  const cmv = Number(p.cmv_percent);
+                  const margem = Number(p.margem_percent);
+                  const semFicha = Number(p.custo_ingredientes) === 0;
+                  return (
+                    <tr key={p.produto_id}>
+                      <td>
+                        {p.nome}
+                        {semFicha && <span className="tag r" style={{ marginLeft: 8 }}>sem ficha</span>}
+                      </td>
+                      <td className="num">{brl(p.custo_total)}</td>
+                      <td className="num">{brl(p.preco_venda)}</td>
+                      <td><span className={'tag ' + (cmv <= 35 ? 'g' : cmv <= 45 ? 'o' : 'r')}>{pct(cmv)}</span></td>
+                      <td className="num" style={{ color: margem >= 65 ? 'var(--grn)' : 'var(--gold)' }}>{pct(margem)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {(!produtos || produtos.length === 0) && <div className="vazio">Nenhum produto cadastrado.</div>}
+        </div>
+
+        <div className="lbl">Atenção</div>
+        <div className="panel">
+          <div className="panel-body nota">
+            Produto marcado como <strong>sem ficha</strong> não tem ingredientes cadastrados: o custo mostrado é
+            só o custo extra, então o CMV aparece baixo demais e a margem alta demais. Cadastre a ficha técnica
+            para o número ficar real.
+          </div>
+        </div>
       </div>
     </>
   );

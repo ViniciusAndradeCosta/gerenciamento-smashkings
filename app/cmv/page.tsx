@@ -1,56 +1,72 @@
-import Header from '@/components/Header';
+import TopBar from '@/components/TopBar';
+import { IcoCmv, IcoCompras, IcoDinheiro, IcoNota } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
-import { brl, pct } from '@/lib/format';
+import { brl, brlCurto, pct } from '@/lib/format';
+import { inicioDoMes } from '@/lib/date';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CMV({ searchParams }: { searchParams: { u?: string } }) {
-  const u = searchParams.u || 'all';
   const supabase = createClient();
   const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
-  const alvo = unidades?.find((x) => x.codigo === u);
+  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
+  const desde = inicioDoMes();
 
-  const inicioMes = new Date();
-  inicioMes.setDate(1);
-  const desde = inicioMes.toISOString().slice(0, 10);
+  const { data: custos } = await supabase.from('v_custo_produto').select('produto_id, custo_total');
+  const custoDe = new Map((custos || []).map((c: any) => [c.produto_id, Number(c.custo_total)]));
 
-  // Custo por produto (view)
-  const { data: custos } = await supabase.from('v_custo_produto').select('*');
-  const custoMap = new Map((custos || []).map((c: any) => [c.produto_id, Number(c.custo_total)]));
-
-  // Vendas do mês
-  let vq = supabase.from('vendas').select('produto_id, quantidade, valor_total, unidade_id').gte('data_venda', desde);
+  let vq = supabase.from('vendas').select('produto_id, quantidade, valor_total').gte('data_venda', desde);
   if (alvo) vq = vq.eq('unidade_id', alvo.id);
-  const { data: vendas } = await vq;
-
-  const faturamento = (vendas || []).reduce((s, x) => s + Number(x.valor_total), 0);
-  const custoVendido = (vendas || []).reduce((s, x) => s + (custoMap.get(x.produto_id) || 0) * Number(x.quantidade), 0);
-  const cmvPct = faturamento ? (custoVendido / faturamento) * 100 : 0;
-
-  // Compras do mês
-  let cq = supabase.from('compras').select('total, unidade_id').gte('data_compra', desde);
+  let cq = supabase.from('compras').select('total').gte('data_compra', desde);
   if (alvo) cq = cq.eq('unidade_id', alvo.id);
-  const { data: compras } = await cq;
-  const totalCompras = (compras || []).reduce((s, x) => s + Number(x.total), 0);
+  const [{ data: vendas }, { data: compras }] = await Promise.all([vq, cq]);
 
-  const meta = cmvPct <= 35;
+  const faturamento = (vendas || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+  const custoVendido = (vendas || []).reduce((s: number, x: any) => s + (custoDe.get(x.produto_id) || 0) * Number(x.quantidade), 0);
+  const cmvPct = faturamento ? (custoVendido / faturamento) * 100 : 0;
+  const totalCompras = (compras || []).reduce((s: number, x: any) => s + Number(x.total), 0);
+  const naMeta = cmvPct > 0 && cmvPct <= 35;
 
   return (
     <>
-      <Header sub={alvo ? alvo.nome : 'CMV consolidado'} />
+      <TopBar titulo={alvo ? `CMV — ${alvo.nome}` : 'CMV consolidado'} unidades={unidades || []} />
+
       <div className="wrap">
-        <div className="sec-t">CMV do mês</div>
-        <div className="kg">
-          <div className="kpi g"><div className="kl">📊 CMV %</div><div className="kv" style={{ color: meta ? 'var(--green)' : 'var(--red)' }}>{pct(cmvPct)}</div><div className={'kd ' + (meta ? 'ok' : 'warn')}>{meta ? '✓ Meta ≤35%' : '⚠ Acima da meta'}</div></div>
-          <div className="kpi r"><div className="kl">🥩 Custo vendido</div><div className="kv">{brl(custoVendido)}</div><div className="kd">Produtos</div></div>
-          <div className="kpi b"><div className="kl">💰 Faturamento</div><div className="kv" style={{ fontSize: 19 }}>{brl(faturamento)}</div><div className="kd">No mês</div></div>
-          <div className="kpi o"><div className="kl">🧾 Compras</div><div className="kv" style={{ fontSize: 19 }}>{brl(totalCompras)}</div><div className="kd">No mês</div></div>
+        <div className="lbl">CMV do mês</div>
+        <div className="krow k4">
+          <div className="kc">
+            <div className="ki"><IcoCmv size={19} /></div>
+            <div className={'kv ' + (naMeta ? 'grn' : cmvPct > 35 ? 'red' : '')}>{pct(cmvPct)}</div>
+            <div className="kl">CMV do período</div>
+            <div className={'kf ' + (naMeta ? 'ok' : 'warn')}>{naMeta ? 'Dentro da meta' : cmvPct > 35 ? 'Acima da meta' : 'Sem vendas'}</div>
+          </div>
+          <div className="kc">
+            <div className="ki"><IcoCompras size={19} /></div>
+            <div className="kv">{brlCurto(custoVendido)}</div>
+            <div className="kl">Custo do que foi vendido</div>
+          </div>
+          <div className="kc">
+            <div className="ki"><IcoDinheiro size={19} /></div>
+            <div className="kv">{brlCurto(faturamento)}</div>
+            <div className="kl">Faturamento no mês</div>
+          </div>
+          <div className="kc">
+            <div className="ki"><IcoNota size={19} /></div>
+            <div className="kv">{brlCurto(totalCompras)}</div>
+            <div className="kl">Compras no mês</div>
+          </div>
         </div>
 
-        <div className="sec-t">Como o CMV é calculado</div>
-        <div className="card"><div className="cb" style={{ paddingTop: 12, fontSize: 13, color: 'var(--t2)', lineHeight: 1.7 }}>
-          O <strong style={{ color: 'var(--text)' }}>CMV%</strong> é o custo dos produtos efetivamente vendidos dividido pelo faturamento do período. Cada venda usa o custo da ficha técnica (soma do CMP de cada ingrediente). Meta saudável para hamburgueria: <strong style={{ color: 'var(--green)' }}>28% a 35%</strong>.
-        </div></div>
+        <div className="lbl">Como o CMV é calculado</div>
+        <div className="panel">
+          <div className="panel-body nota">
+            O <strong>CMV%</strong> é o custo dos produtos efetivamente vendidos dividido pelo faturamento do
+            período. Cada venda usa o custo da ficha técnica — a soma do CMP (custo médio ponderado) de cada
+            ingrediente. Meta saudável para hamburgueria: <strong className="g">28% a 35%</strong>.
+            <br /><br />
+            No mês, {brl(faturamento)} vendidos custaram {brl(custoVendido)} em insumos.
+          </div>
+        </div>
       </div>
     </>
   );

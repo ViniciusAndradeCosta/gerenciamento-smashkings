@@ -2,11 +2,12 @@
 -- SmashKings — Dados de exemplo (rode DEPOIS do schema.sql)
 -- ============================================================
 
--- Unidades
+-- Unidades (cores alinhadas ao visual do app: dourado da marca + verde)
 insert into unidades (nome, codigo, cor) values
-  ('Unidade Centro', 'U1', '#4fc3f7'),
-  ('Unidade Norte',  'U2', '#2dd36f')
-on conflict (codigo) do nothing;
+  ('João Monlevade', 'U1', '#f7c915'),
+  ('Bela Vista',     'U2', '#79e0a0')
+on conflict (codigo) do update
+  set nome = excluded.nome, cor = excluded.cor;
 
 -- Fornecedores
 insert into fornecedores (nome, telefone) values

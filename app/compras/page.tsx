@@ -1,11 +1,12 @@
-import Header from '@/components/Header';
+import TopBar from '@/components/TopBar';
+import CompraForm from '@/components/CompraForm';
+import { IcoNota } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl, num } from '@/lib/format';
-import CompraForm from '@/components/CompraForm';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Compras() {
+export default async function Compras({ searchParams }: { searchParams: { u?: string } }) {
   const supabase = createClient();
   const [{ data: unidades }, { data: ingredientes }, { data: fornecedores }] = await Promise.all([
     supabase.from('unidades').select('*').order('codigo'),
@@ -13,36 +14,68 @@ export default async function Compras() {
     supabase.from('fornecedores').select('*').order('nome'),
   ]);
 
-  const { data: recentes } = await supabase
+  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
+
+  let rq = supabase
     .from('compras')
-    .select('*, ingredientes(nome, unidade_medida), unidades(codigo, cor), fornecedores(nome)')
+    .select('*, ingredientes(nome, unidade_medida), unidades(nome, codigo, cor), fornecedores(nome)')
     .order('criado_em', { ascending: false })
-    .limit(10);
+    .limit(12);
+  if (alvo) rq = rq.eq('unidade_id', alvo.id);
+  const { data: recentes } = await rq;
+
+  const total = (recentes || []).reduce((s: number, c: any) => s + Number(c.total), 0);
 
   return (
     <>
-      <Header sub="Registrar compra" />
-      <div className="wrap">
-        <div className="sec-t">Nova compra</div>
-        <CompraForm
-          unidades={unidades || []}
-          ingredientes={ingredientes || []}
-          fornecedores={fornecedores || []}
-        />
+      <TopBar titulo={alvo ? `Compras — ${alvo.nome}` : 'Registrar compra'} unidades={unidades || []} />
 
-        <div className="sec-t">Últimas compras</div>
-        <div className="card"><div className="cb" style={{ paddingTop: 6 }}><div className="slist">
-          {(recentes || []).map((c: any) => (
-            <div className="srow" key={c.id}>
-              <div className="sinfo">
-                <div className="sn">{c.ingredientes?.nome} <span className="tag b" style={{ marginLeft: 4 }}>{c.unidades?.codigo}</span></div>
-                <div className="smeta">{num(c.quantidade, 2)} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}</div>
+      <div className="wrap">
+        <div className="grid2">
+          <section>
+            <div className="lbl">Nova compra</div>
+            <div className="panel sticky">
+              <div className="panel-body">
+                <CompraForm
+                  unidades={unidades || []}
+                  ingredientes={ingredientes || []}
+                  fornecedores={fornecedores || []}
+                  unidadeInicial={alvo?.id}
+                />
               </div>
-              <div className="sright"><div className="sqty">{brl(c.total)}</div></div>
             </div>
-          ))}
-          {(!recentes || recentes.length === 0) && <div style={{ padding: 14, color: 'var(--t2)', fontSize: 13 }}>Nenhuma compra registrada.</div>}
-        </div></div></div>
+          </section>
+
+          <section>
+            <div className="lbl">Últimas compras</div>
+            <div className="panel">
+              <div className="sh">
+                <div className="si"><IcoNota size={20} /></div>
+                <div>
+                  <div className="sv">{brl(total)}</div>
+                  <div className="sl">{(recentes || []).length} últimos lançamentos</div>
+                </div>
+              </div>
+
+              {(recentes || []).map((c: any) => (
+                <div className="al" key={c.id}>
+                  <span className="adot" style={{ background: c.unidades?.cor || 'var(--gold)' }} />
+                  <div className="ab">
+                    <b>{c.ingredientes?.nome}</b>
+                    <span>
+                      {num(c.quantidade, 2)} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}
+                    </span>
+                  </div>
+                  <div className="ar">
+                    <div className="aq">{brl(c.total)}</div>
+                    <div className="au">{alvo ? c.data_compra?.split('-').reverse().join('/') : c.unidades?.nome}</div>
+                  </div>
+                </div>
+              ))}
+              {(!recentes || recentes.length === 0) && <div className="vazio">Nenhuma compra registrada.</div>}
+            </div>
+          </section>
+        </div>
       </div>
     </>
   );
