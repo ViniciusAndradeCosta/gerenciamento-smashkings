@@ -49,16 +49,23 @@ export default async function Dashboard({ searchParams }: { searchParams: { u?: 
 
   const valorEstoque = (valorEst || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
 
+  // FILTRO: Removemos o 'geral' para montar os cards de faturamento por unidade
   const porUnidade = alvo
     ? []
-    : (unidades || []).map((un) => ({
-        ...un,
-        fat: (vHoje || []).filter((v: any) => v.unidade_id === un.id).reduce((s: number, x: any) => s + Number(x.valor_total), 0),
-      }));
+    : (unidades || [])
+        .filter((un) => un.codigo !== 'geral')
+        .map((un) => ({
+          ...un,
+          fat: (vHoje || []).filter((v: any) => v.unidade_id === un.id).reduce((s: number, x: any) => s + Number(x.valor_total), 0),
+        }));
+        
   const totalFat = porUnidade.reduce((s, x) => s + x.fat, 0);
 
   const primeiroNome = String(user?.user_metadata?.nome || user?.email || '').split(/[\s@]/)[0];
-  const qtdUnidades = unidades?.length || 0;
+  
+  // FILTRO: Contamos apenas as lojas reais (ignorando o 'geral') para o título
+  const qtdUnidades = (unidades || []).filter((u) => u.codigo !== 'geral').length;
+  
   const linkEstoque = alvo ? `/estoque?u=${alvo.codigo}` : '/estoque';
 
   return (
@@ -71,6 +78,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { u?: 
       />
 
       <Suspense fallback={<div className="useg" />}>
+        {/* O UnitSwitcher continua recebendo todas as unidades (incluindo o Geral) para os botões funcionarem */}
         <UnitSwitcher unidades={unidades || []} />
       </Suspense>
 

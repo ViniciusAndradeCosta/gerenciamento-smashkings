@@ -20,8 +20,16 @@ const todos: Item[] = [
   { href: '/comparativo', label: 'Comparativo', Ico: IcoComparativo },
 ];
 
-// barra inferior (celular): 4 itens + o botão central de nova compra
-const barra: Item[] = todos.filter((i) => ['/', '/estoque', '/cmv', '/fichas'].includes(i.href));
+// barra inferior (celular): Definida manualmente para podermos encurtar o nome e organizar a ordem
+const barra: Item[] = [
+  { href: '/', label: 'Início', Ico: IcoInicio },
+  { href: '/estoque', label: 'Estoque', Ico: IcoEstoque },
+  // -- O botão central (FAB) de compras entrará aqui visualmente --
+   // Encurtado para caber melhor
+  { href: '/cmv', label: 'CMV', Ico: IcoCmv },
+  { href: '/fichas', label: 'Fichas', Ico: IcoFichas },
+  { href: '/comparativo', label: 'Comparar', Ico: IcoComparativo },
+];
 
 export default function AppNav() {
   const path = usePathname();
@@ -68,6 +76,7 @@ export default function AppNav() {
 
       {/* ---------- celular ---------- */}
       <nav className="bnav">
+        {/* Renderiza os 2 primeiros itens (Início e Estoque) na esquerda */}
         {barra.slice(0, 2).map(({ href, label, Ico }) => (
           <Link key={href} href={href} className={'nb' + (ativo(href) ? ' act' : '')} aria-current={ativo(href) ? 'page' : undefined}>
             <Ico size={21} />
@@ -75,10 +84,12 @@ export default function AppNav() {
           </Link>
         ))}
 
+        {/* Botão central (FAB) */}
         <Link href="/compras" className="fab" aria-label="Registrar compra">
           <IcoMais size={24} />
         </Link>
 
+        {/* Renderiza os 3 últimos itens (Comparar, CMV e Fichas) na direita */}
         {barra.slice(2).map(({ href, label, Ico }) => (
           <Link key={href} href={href} className={'nb' + (ativo(href) ? ' act' : '')} aria-current={ativo(href) ? 'page' : undefined}>
             <Ico size={21} />

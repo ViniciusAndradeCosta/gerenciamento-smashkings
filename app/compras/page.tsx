@@ -1,12 +1,14 @@
 import TopBar from '@/components/TopBar';
 import CompraForm from '@/components/CompraForm';
+import ImportarNotaForm from '@/components/ImportarNotaForm'; 
 import { IcoNota } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl, num } from '@/lib/format';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Compras({ searchParams }: { searchParams: { u?: string } }) {
+export default async function Compras({ searchParams }: { searchParams: { u?: string; modo?: string } }) {
   const supabase = createClient();
   const [{ data: unidades }, { data: ingredientes }, { data: fornecedores }] = await Promise.all([
     supabase.from('unidades').select('*').order('codigo'),
@@ -15,6 +17,9 @@ export default async function Compras({ searchParams }: { searchParams: { u?: st
   ]);
 
   const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
+  
+  // Verifica qual aba está ativa (manual ou ocr)
+  const modoAtual = searchParams.modo || 'manual';
 
   let rq = supabase
     .from('compras')
@@ -28,25 +33,46 @@ export default async function Compras({ searchParams }: { searchParams: { u?: st
 
   return (
     <>
-      <TopBar titulo={alvo ? `Compras — ${alvo.nome}` : 'Registrar compra'} unidades={unidades || []} />
+      <TopBar titulo={alvo ? `Compras — ${alvo.nome}` : 'Registrar compra'}/>
 
       <div className="wrap">
-        <div className="grid2">
-          <section>
-            <div className="lbl">Nova compra</div>
+        {/* Container Flexbox à prova de falhas: Quebra a linha no celular automaticamente */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'flex-start' }}>
+          
+          {/* SEÇÃO DA ESQUERDA (FORMULÁRIO): Forçamos ela a ser a maior (flex 60%) */}
+          <section style={{ flex: '1 1 60%', minWidth: '320px' }}>
+            
+            {/* ABAS DE NAVEGAÇÃO */}
+            <div className="useg" style={{ marginBottom: 15, justifyContent: 'flex-start', padding: 0 }}>
+              <Link href={alvo ? `?u=${alvo.codigo}&modo=manual` : `?modo=manual`}>
+                <button className={modoAtual === 'manual' ? 'act' : ''}>Mão</button>
+              </Link>
+              <Link href={alvo ? `?u=${alvo.codigo}&modo=ocr` : `?modo=ocr`}>
+                <button className={modoAtual === 'ocr' ? 'act' : ''}>Nota Fiscal (IA)</button>
+              </Link>
+            </div>
+
             <div className="panel sticky">
               <div className="panel-body">
-                <CompraForm
-                  unidades={unidades || []}
-                  ingredientes={ingredientes || []}
-                  fornecedores={fornecedores || []}
-                  unidadeInicial={alvo?.id}
-                />
+                {modoAtual === 'manual' ? (
+                  <CompraForm
+                    unidades={unidades || []}
+                    ingredientes={ingredientes || []}
+                    fornecedores={fornecedores || []}
+                    unidadeInicial={alvo?.id}
+                  />
+                ) : (
+                  <ImportarNotaForm 
+                    unidades={unidades || []}
+                    ingredientes={ingredientes || []}
+                  />
+                )}
               </div>
             </div>
           </section>
 
-          <section>
+          {/* SEÇÃO DA DIREITA (LISTA): Forçamos ela a ser a menor (flex 30%) */}
+          <section style={{ flex: '1 1 30%', minWidth: '320px' }}>
             <div className="lbl">Últimas compras</div>
             <div className="panel">
               <div className="sh">
@@ -75,6 +101,7 @@ export default async function Compras({ searchParams }: { searchParams: { u?: st
               {(!recentes || recentes.length === 0) && <div className="vazio">Nenhuma compra registrada.</div>}
             </div>
           </section>
+          
         </div>
       </div>
     </>
