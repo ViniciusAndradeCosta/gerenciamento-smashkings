@@ -18,7 +18,11 @@ export default async function Comparativo() {
 
   const custoDe = new Map((custos || []).map((c: any) => [c.produto_id, Number(c.custo_total)]));
 
-  const dados = (unidades || []).map((un) => {
+  // FILTRO: Removemos a unidade 'Geral' da lista para que ela não apareça no comparativo
+  const lojasFisicas = (unidades || []).filter((u: any) => u.codigo !== 'geral');
+
+  // Usamos a lista filtrada (lojasFisicas) para fazer os cálculos
+  const dados = lojasFisicas.map((un) => {
     const minhas = (vendas || []).filter((v: any) => v.unidade_id === un.id);
     const fat = minhas.reduce((s: number, x: any) => s + Number(x.valor_total), 0);
     const custo = minhas.reduce((s: number, x: any) => s + (custoDe.get(x.produto_id) || 0) * Number(x.quantidade), 0);
