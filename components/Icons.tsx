@@ -101,3 +101,11 @@ export const IcoPreparos = (p: IconProps) => (
     <line x1="6" y1="18" x2="18" y2="18" />
   </Svg>
 );
+
+export const IcoChat = (p: IconProps) => (
+  <Svg {...p}><path d="M4 5h16v11H8l-4 4V5Z" /><path d="M8 10h8M8 13h5" /></Svg>
+);
+
+export const IcoEnviar = (p: IconProps) => (
+  <Svg {...p}><path d="M4 12l16-8-6 16-3-6-7-2Z" /></Svg>
+);
