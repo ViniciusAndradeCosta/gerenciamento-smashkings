@@ -5,30 +5,29 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import {
   IcoInicio, IcoEstoque, IcoCmv, IcoFichas, IcoCompras,
-  IcoComparativo, IcoMais, IcoSair,
+  IcoComparativo, IcoMais, IcoSair, IcoProdutos, IcoPreparos
 } from './Icons';
 
 type Item = { href: string; label: string; Ico: (p: { size?: number }) => JSX.Element };
 
-// menu completo — aparece no lateral (desktop)
 const todos: Item[] = [
   { href: '/', label: 'Início', Ico: IcoInicio },
   { href: '/estoque', label: 'Estoque', Ico: IcoEstoque },
   { href: '/compras', label: 'Compras', Ico: IcoCompras },
   { href: '/cmv', label: 'CMV', Ico: IcoCmv },
+  { href: '/produtos', label: 'Produtos', Ico: IcoProdutos },
   { href: '/fichas', label: 'Fichas', Ico: IcoFichas },
+  { href: '/preparos', label: 'Preparos', Ico: IcoPreparos },
   { href: '/comparativo', label: 'Comparativo', Ico: IcoComparativo },
 ];
 
-// barra inferior (celular): Definida manualmente para podermos encurtar o nome e organizar a ordem
 const barra: Item[] = [
   { href: '/', label: 'Início', Ico: IcoInicio },
   { href: '/estoque', label: 'Estoque', Ico: IcoEstoque },
-  // -- O botão central (FAB) de compras entrará aqui visualmente --
-   // Encurtado para caber melhor
   { href: '/cmv', label: 'CMV', Ico: IcoCmv },
+  { href: '/produtos', label: 'Produtos', Ico: IcoProdutos },
   { href: '/fichas', label: 'Fichas', Ico: IcoFichas },
-  { href: '/comparativo', label: 'Comparar', Ico: IcoComparativo },
+  { href: '/preparos', label: 'Preparos', Ico: IcoPreparos },
 ];
 
 export default function AppNav() {
@@ -49,7 +48,7 @@ export default function AppNav() {
         <Link href="/" className="side-brand">
           <Image src="/logo.png" alt="" width={40} height={40} priority />
           <div>
-            <div className="n">SmashKings</div>
+            <div className="n">Smash Kings</div>
             <div className="s">Gestão · 2 unidades</div>
           </div>
         </Link>
@@ -76,21 +75,18 @@ export default function AppNav() {
 
       {/* ---------- celular ---------- */}
       <nav className="bnav">
-        {/* Renderiza os 2 primeiros itens (Início e Estoque) na esquerda */}
-        {barra.slice(0, 2).map(({ href, label, Ico }) => (
+        {barra.slice(0, 3).map(({ href, label, Ico }) => (
           <Link key={href} href={href} className={'nb' + (ativo(href) ? ' act' : '')} aria-current={ativo(href) ? 'page' : undefined}>
             <Ico size={21} />
             {label}
           </Link>
         ))}
 
-        {/* Botão central (FAB) */}
         <Link href="/compras" className="fab" aria-label="Registrar compra">
           <IcoMais size={24} />
         </Link>
 
-        {/* Renderiza os 3 últimos itens (Comparar, CMV e Fichas) na direita */}
-        {barra.slice(2).map(({ href, label, Ico }) => (
+        {barra.slice(3).map(({ href, label, Ico }) => (
           <Link key={href} href={href} className={'nb' + (ativo(href) ? ' act' : '')} aria-current={ativo(href) ? 'page' : undefined}>
             <Ico size={21} />
             {label}

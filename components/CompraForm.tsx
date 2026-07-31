@@ -10,38 +10,67 @@ export default function CompraForm({
   unidades: Opt[]; ingredientes: Opt[]; fornecedores: Opt[]; unidadeInicial?: string;
 }) {
   const [unidade, setUnidade] = useState(unidadeInicial || unidades[0]?.id || '');
-  const [ingrediente, setIngrediente] = useState(ingredientes[0]?.id || '');
   
-  // O estado do fornecedor agora guarda um texto (o nome), e não mais o ID diretamente
+  // Agora o estado guarda o texto digitado/selecionado do ingrediente
+  const [ingredienteInput, setIngredienteInput] = useState('');
+  
+  // O estado do fornecedor guarda o texto digitado/selecionado
   const [fornecedorInput, setFornecedorInput] = useState('');
   
   const [quantidade, setQuantidade] = useState('');
   const [precoUnitario, setPrecoUnitario] = useState('');
   const [carregando, setCarregando] = useState(false);
 
-  // Busca a unidade de medida do ingrediente selecionado para mostrar na label
-  const ingSelecionado = ingredientes.find(i => i.id === ingrediente);
-  const siglaMedida = ingSelecionado?.unidade_medida || 'UN';
+  // Descobre a unidade de medida se o ingrediente já existir na lista
+  const ingEncontrado = ingredientes.find(i => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim());
+  const siglaMedida = ingEncontrado?.unidade_medida || 'UN';
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
+    if (!ingredienteInput.trim()) {
+      alert('Por favor, informe o ingrediente.');
+      return;
+    }
+
     setCarregando(true);
     const supabase = createClient();
     
     try {
+      let idDoIngrediente = null;
       let idDoFornecedor = null;
       
-      // Se o usuário digitou algum fornecedor, vamos verificar
+      // 1. GERENCIAMENTO DO INGREDIENTE (Busca ou Cria Automaticamente)
+      const ingredienteExistente = ingredientes.find(
+        i => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim()
+      );
+
+      if (ingredienteExistente) {
+        idDoIngrediente = ingredienteExistente.id;
+      } else {
+        // Se o ingrediente não existe, cria um novo na tabela 'ingredientes'
+        const { data: novoIng, error: erroIng } = await supabase
+          .from('ingredientes')
+          .insert({ 
+            nome: ingredienteInput.trim(), 
+            unidade_medida: 'UN', // Padrão inicial caso seja criado manualmente
+            ativo: true 
+          })
+          .select('id')
+          .single();
+          
+        if (erroIng) throw new Error("Erro ao criar novo ingrediente: " + erroIng.message);
+        idDoIngrediente = novoIng.id;
+      }
+
+      // 2. GERENCIAMENTO DO FORNECEDOR (Busca ou Cria se preenchido)
       if (fornecedorInput.trim() !== '') {
         const fornecedorExistente = fornecedores.find(
           f => f.nome.toLowerCase().trim() === fornecedorInput.toLowerCase().trim()
         );
 
         if (fornecedorExistente) {
-          // Já existe, pega o ID dele
           idDoFornecedor = fornecedorExistente.id;
         } else {
-          // Não existe, cria um novo na hora na tabela 'fornecedores'
           const { data: novoForn, error: erroForn } = await supabase
             .from('fornecedores')
             .insert({ nome: fornecedorInput.trim() })
@@ -53,13 +82,13 @@ export default function CompraForm({
         }
       }
 
-      // Salva a compra (lembrando que enviamos o preco_unitario para o banco calcular o total)
+      // 3. SALVA A COMPRA
       const { error: erroCompra } = await supabase
         .from('compras')
         .insert({
           unidade_id: unidade,
-          ingrediente_id: ingrediente,
-          fornecedor_id: idDoFornecedor, // Envia o ID (novo, antigo, ou null se deixou vazio)
+          ingrediente_id: idDoIngrediente,
+          fornecedor_id: idDoFornecedor,
           quantidade: Number(quantidade),
           preco_unitario: Number(precoUnitario.replace(',', '.'))
         });
@@ -71,6 +100,7 @@ export default function CompraForm({
       // Limpa os campos para o próximo lançamento
       setQuantidade('');
       setPrecoUnitario('');
+      setIngredienteInput('');
       setFornecedorInput('');
       window.location.reload();
       
@@ -96,22 +126,27 @@ export default function CompraForm({
         </select>
       </div>
 
+      {/* CAMPO HÍBRIDO DE INGREDIENTE (Digitar ou Selecionar) */}
       <div className="field" style={{ marginBottom: 15 }}>
         <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Ingrediente</label>
-        <select 
-          value={ingrediente} 
-          onChange={(e) => setIngrediente(e.target.value)}
+        <input 
+          list="lista-ingredientes" 
+          value={ingredienteInput} 
+          onChange={(e) => setIngredienteInput(e.target.value)}
+          placeholder="Selecione da lista ou digite um novo..."
           style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
           required
-        >
-          {ingredientes.map(i => <option key={i.id} value={i.id}>{i.nome}</option>)}
-        </select>
+        />
+        <datalist id="lista-ingredientes">
+          {ingredientes.map(i => (
+            <option key={i.id} value={i.nome} />
+          ))}
+        </datalist>
       </div>
 
+      {/* CAMPO HÍBRIDO DE FORNECEDOR (Digitar ou Selecionar) */}
       <div className="field" style={{ marginBottom: 15 }}>
         <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Fornecedor</label>
-        
-        {/* CAMPO HÍBRIDO: Input de texto amarrado a um Datalist */}
         <input 
           list="lista-fornecedores" 
           value={fornecedorInput} 

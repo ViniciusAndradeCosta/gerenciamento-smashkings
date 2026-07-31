@@ -76,3 +76,28 @@ export const IcoAlerta = (p: IconProps) => (
 export const IcoNota = (p: IconProps) => (
   <Svg {...p}><path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2V3Z" /><path d="M9 8h6M9 12h6" /></Svg>
 );
+
+export const IcoCustos = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
+    <path d="M12 18V6" />
+  </Svg>
+);
+
+export const IcoProdutos = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 11a8 8 0 0 1 16 0" />
+    <path d="M2 11h20" />
+    <path d="M4 15h16" />
+    <path d="M3 19h18a1 1 0 0 0 1-1v-1H2v1a1 1 0 0 0 1 1z" />
+  </Svg>
+);
+
+export const IcoPreparos = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 13.8a4.5 4.5 0 1 1 2.6-8.3 5 5 0 0 1 6.8 0 4.5 4.5 0 1 1 2.6 8.3" />
+    <path d="M6 14h12v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-7z" />
+    <line x1="6" y1="18" x2="18" y2="18" />
+  </Svg>
+);
