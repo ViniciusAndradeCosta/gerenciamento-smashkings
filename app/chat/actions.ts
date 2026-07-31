@@ -24,7 +24,7 @@ type Resumo = {
   comprasMes: number;
   valorEstoque: number;
   alertas: { ingrediente: string; quantidade: number; minimo: number; medida: string; status: string; unidade: string }[];
-  porUnidade: { nome: string; faturamento: number }[];
+  porUnidade: { nome: string; faturamento: number; estoque: number; alertas: number }[];
 };
 
 /** Junta os números do negócio a partir do Supabase (respeita o RLS do usuário). */
@@ -64,6 +64,10 @@ async function montarResumo(): Promise<Resumo> {
     0
   );
 
+  // v_valor_estoque já vem uma linha por unidade — guardamos o valor de cada loja
+  // para responder "estoque da Bela Vista" sem misturar com a outra unidade.
+  const estoqueDe = new Map((valorEst || []).map((v: any) => [v.unidade_id, Number(v.valor_total)]));
+
   return {
     unidades: (unidades || []).map((u: any) => ({ nome: u.nome })),
     faturamentoHoje: soma(vHoje, 'valor_total'),
@@ -87,6 +91,8 @@ async function montarResumo(): Promise<Resumo> {
       faturamento: (vMes || [])
         .filter((v: any) => v.unidade_id === un.id)
         .reduce((s: number, x: any) => s + Number(x.valor_total), 0),
+      estoque: estoqueDe.get(un.id) || 0,
+      alertas: (alertas || []).filter((a: any) => a.unidade_id === un.id).length,
     })),
   };
 }
@@ -98,7 +104,12 @@ function resumoTexto(r: Resumo): string {
         .map((a) => `  - ${a.ingrediente} (${a.unidade}): ${num(a.quantidade, 2)} ${a.medida}, mínimo ${num(a.minimo, 2)} — ${a.status}`)
         .join('\n')
     : '  (nenhum item abaixo do mínimo)';
-  const unidades = r.porUnidade.map((u) => `  - ${u.nome}: ${brl(u.faturamento)} no mês`).join('\n');
+  const unidades = r.porUnidade
+    .map(
+      (u) =>
+        `  - ${u.nome}: faturamento ${brl(u.faturamento)} no mês, valor em estoque ${brl(u.estoque)}, ${u.alertas} ${u.alertas === 1 ? 'item' : 'itens'} em alerta`
+    )
+    .join('\n');
 
   return `DADOS ATUAIS DA SMASHKINGS (use apenas estes números):
 - Unidades: ${r.unidades.map((u) => u.nome).join(', ') || '—'}
@@ -107,10 +118,10 @@ function resumoTexto(r: Resumo): string {
 - Faturamento no mês: ${brl(r.faturamentoMes)}
 - CMV do mês: ${pct(r.cmvPct)} (custo dos produtos vendidos: ${brl(r.custoMes)}) — meta saudável 28% a 35%
 - Compras no mês: ${brl(r.comprasMes)}
-- Valor total em estoque: ${brl(r.valorEstoque)}
+- Valor total em estoque (todas as unidades somadas): ${brl(r.valorEstoque)}
 - Itens em alerta de estoque:
 ${alertas}
-- Faturamento por unidade no mês:
+- Dados separados de cada unidade (mês):
 ${unidades}`;
 }
 
@@ -167,6 +178,13 @@ function respostaLocal(pergunta: string, r: Resumo): string {
     .replace(/\p{Diacritic}/gu, '');
   const tem = (...ts: string[]) => ts.some((t) => p.includes(t));
 
+  // Detecta se a pergunta cita uma unidade específica (ex.: "estoque da bela vista").
+  const semAcento = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  const unidadeCitada = r.porUnidade.find((u) => {
+    const palavras = semAcento(u.nome).replace(/unidade\s*/g, '').split(/\s+/).filter((w) => w.length >= 4);
+    return palavras.some((w) => p.includes(w));
+  });
+
   if (tem('cmv')) {
     const situacao = r.cmvPct === 0 ? 'ainda sem vendas no mês' : r.cmvPct <= 35 ? 'dentro da meta (28% a 35%)' : 'acima da meta de 35%';
     return `O CMV do mês está em ${pct(r.cmvPct)} — ${situacao}. No mês, ${brl(r.faturamentoMes)} vendidos custaram ${brl(r.custoMes)} em insumos.`;
@@ -180,14 +198,23 @@ function respostaLocal(pergunta: string, r: Resumo): string {
     return `Itens em alerta de estoque:\n${lista}`;
   }
   if (tem('estoque')) {
-    return `O valor total em estoque é ${brl(r.valorEstoque)}. Itens em alerta: ${r.alertas.length}.`;
+    if (unidadeCitada) {
+      return `O valor em estoque da ${unidadeCitada.nome} é ${brl(unidadeCitada.estoque)}, com ${unidadeCitada.alertas} ${unidadeCitada.alertas === 1 ? 'item' : 'itens'} em alerta.`;
+    }
+    const porU = r.porUnidade.map((u) => `• ${u.nome}: ${brl(u.estoque)}`).join('\n');
+    return `Valor total em estoque: ${brl(r.valorEstoque)} (${r.alertas.length} em alerta no total).\nPor unidade:\n${porU}`;
   }
   if (tem('compra')) {
     return `As compras registradas no mês somam ${brl(r.comprasMes)}.`;
   }
   if (tem('compar', 'unidade', 'melhor', 'centro', 'norte')) {
-    const lista = r.porUnidade.map((u) => `• ${u.nome}: ${brl(u.faturamento)}`).join('\n');
-    return `Faturamento por unidade no mês:\n${lista}`;
+    if (unidadeCitada) {
+      return `${unidadeCitada.nome} no mês: faturamento ${brl(unidadeCitada.faturamento)}, valor em estoque ${brl(unidadeCitada.estoque)}, ${unidadeCitada.alertas} ${unidadeCitada.alertas === 1 ? 'item' : 'itens'} em alerta.`;
+    }
+    const lista = r.porUnidade
+      .map((u) => `• ${u.nome}: faturamento ${brl(u.faturamento)}, estoque ${brl(u.estoque)}, ${u.alertas} em alerta`)
+      .join('\n');
+    return `Comparativo por unidade (mês):\n${lista}`;
   }
   if (tem('ontem')) {
     return `Ontem o faturamento foi ${brl(r.faturamentoOntem)}.`;
