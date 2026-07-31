@@ -12,7 +12,7 @@ export default async function Compras({ searchParams }: { searchParams: { u?: st
   const supabase = createClient();
   const [{ data: unidades }, { data: ingredientes }, { data: fornecedores }] = await Promise.all([
     supabase.from('unidades').select('*').order('codigo'),
-    supabase.from('ingredientes').select('*').eq('ativo', true).order('nome'),
+    supabase.from('ingredientes').select('*').order('nome'),
     supabase.from('fornecedores').select('*').order('nome'),
   ]);
 
@@ -84,21 +84,28 @@ export default async function Compras({ searchParams }: { searchParams: { u?: st
               </div>
 
               {(recentes || []).map((c: any) => (
-                <div className="al" key={c.id}>
-                  <span className="adot" style={{ background: c.unidades?.cor || 'var(--gold)' }} />
-                  <div className="ab">
-                    <b>{c.ingredientes?.nome}</b>
-                    <span>
+                <div className="al" key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
+                  {/* Bolinha colorida da unidade */}
+                  <span className="adot" style={{ width: '10px', height: '10px', borderRadius: '50%', background: c.unidades?.cor || 'var(--gold)', flexShrink: 0 }} />
+                  
+                  <div className="ab" style={{ flex: 1, minWidth: 0 }}>
+                    <b style={{ display: 'block', color: 'var(--txt)', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.ingredientes?.nome}
+                    </b>
+                    <span style={{ display: 'block', color: 'var(--dim)', fontSize: '12px' }}>
                       {num(c.quantidade, 2)} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}
                     </span>
                   </div>
-                  <div className="ar">
-                    <div className="aq">{brl(c.total)}</div>
-                    <div className="au">{alvo ? c.data_compra?.split('-').reverse().join('/') : c.unidades?.nome}</div>
+
+                  <div className="ar" style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div className="aq" style={{ color: 'var(--gold)', fontWeight: 'bold', fontSize: '14px' }}>{brl(c.total)}</div>
+                    <div className="au" style={{ fontSize: '11px', color: 'var(--dim)' }}>
+                      {c.unidades?.nome || '—'} · {c.data_compra ? c.data_compra.split('-').reverse().join('/') : ''}
+                    </div>
                   </div>
                 </div>
               ))}
-              {(!recentes || recentes.length === 0) && <div className="vazio">Nenhuma compra registrada.</div>}
+              {(!recentes || recentes.length === 0) && <div className="vazio" style={{ padding: '24px', textAlign: 'center' }}>Nenhuma compra registrada.</div>}
             </div>
           </section>
           

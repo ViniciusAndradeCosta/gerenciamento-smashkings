@@ -19,7 +19,7 @@ export default function BrandRow({ sub }: { sub: string }) {
     <div className="brand">
       <Image className="bmark" src="/logo.png" alt="" width={40} height={40} priority />
       <div>
-        <div className="bn bmark">SmashKings</div>
+        <div className="bn bmark">Smash Kings</div>
         <div className="bs">{sub}</div>
       </div>
       <button className="bout bmark" onClick={sair} aria-label="Sair da conta" title="Sair">
