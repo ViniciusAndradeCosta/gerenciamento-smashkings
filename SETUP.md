@@ -42,6 +42,10 @@ Sem pressa — cada passo tem prints do que clicar. Leva ~15 minutos.
      NEXT_PUBLIC_SUPABASE_URL=https://SEU-PROJETO.supabase.co
      NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-anon-key
      ```
+   - **Opcional (chat com IA):** para o assistente responder em linguagem livre,
+     crie uma chave grátis em https://aistudio.google.com/app/apikey e adicione
+     `GEMINI_API_KEY=sua-chave`. Sem ela, o chat funciona em modo local (responde
+     as perguntas comuns direto do banco).
 3. No terminal:
    ```
    npm install
@@ -60,9 +64,10 @@ Você já tem GitHub e Vercel.
 1. Suba a pasta `smashkings` num repositório no GitHub
    (https://github.com/new → "uploading an existing file" → arraste os arquivos).
 2. Acesse https://vercel.com/new → **Import** do repositório.
-3. Em **Environment Variables**, adicione as duas mesmas chaves:
+3. Em **Environment Variables**, adicione as chaves:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `GEMINI_API_KEY` (opcional — só para o chat com IA)
 4. Clique em **Deploy**. Em ~1 min você recebe o link `https://smashkings.vercel.app`.
 
 ### Ajuste final no Supabase (para login funcionar no ar)
@@ -92,3 +97,11 @@ Supabase → Table Editor → tabela `perfis` → edite o `papel` para `gerente`
 
 **"Os dados são de exemplo?"**
 O `seed.sql` cria dados iniciais para você ver o sistema cheio. Pode apagar quando começar a usar de verdade, ou simplesmente registrar suas compras/vendas por cima.
+
+**"Como funciona o assistente (chat)?"**
+No **botão flutuante 🍔** (canto inferior direito, em qualquer tela), é só perguntar em português — *"quanto vendi hoje?"*, *"qual o
+CMV do mês?"*, *"o que está acabando no estoque?"*, *"compare as unidades"*. Ele responde
+com os números reais do seu banco (respeitando o que cada usuário pode ver). Com a
+`GEMINI_API_KEY` configurada, entende perguntas soltas via IA (Google Gemini, grátis);
+sem a chave, funciona em **modo local** — reconhece as perguntas mais comuns e responde
+direto do Supabase, sem enviar nada para fora e sem custo.

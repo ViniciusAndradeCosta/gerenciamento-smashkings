@@ -1,6 +1,7 @@
 'use client';
 import { usePathname } from 'next/navigation';
 import AppNav from './AppNav';
+import ChatWidget from './ChatWidget';
 
 /**
  * Decide entre a moldura do app (menu lateral + barra inferior) e a tela
@@ -13,6 +14,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <>
       <AppNav />
       <main className="main">{children}</main>
+      <ChatWidget />
     </>
   );
 }
