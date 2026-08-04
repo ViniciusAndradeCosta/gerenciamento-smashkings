@@ -39,14 +39,26 @@ export default function ImportarNotaForm({
     const formData = new FormData();
     formData.append('file', arquivo);
 
+    // --- BLINDAGEM DE IA (Enviando instrução estrita para o backend) ---
+    const regraIA = `REGRA CRÍTICA DE EXTRAÇÃO: Ignore nomes de marcas (ex: Vitapão, Sadia, Heinz, Liza), pesos, medidas (ex: 1kg, 500g, 2L, 900ml) e numerações de lote. Extraia e retorne EXCLUSIVAMENTE o nome genérico, limpo e culinário do insumo. Exemplo: Se ler "ACUCAR MASCAVO VITAPAO 1KG", retorne APENAS "Açúcar Mascavo". Formate usando a primeira letra maiúscula em cada palavra.`;
+    formData.append('instrucoes_extras', regraIA);
+
     try {
       const res = await fetch('/api/extrair-nf', { method: 'POST', body: formData });
-      const dadosIA = await res.json();
+      let dadosIA = await res.json();
       
       if (!res.ok || dadosIA.error) {
         throw new Error(dadosIA.detalhe || dadosIA.error || 'Falha na comunicação com o servidor');
       }
       
+      // Limpeza preventiva no frontend caso a IA falhe e envie pesos no final (ex: "Açúcar Mascavo 1kg")
+      dadosIA = dadosIA.map((item: ItemNF) => {
+        let nomeLimpo = item.nome;
+        // Expressão regular que remove menções de peso ou volume perdidas no final do nome do ingrediente
+        nomeLimpo = nomeLimpo.replace(/\s+\d+(,\d+)?\s*(kg|g|ml|l|mg|un|cx|pcte|pacote)s?$/i, '');
+        return { ...item, nome: nomeLimpo.trim() };
+      });
+
       setItensExtraidos(dadosIA);
     } catch (error: any) {
       alert("Motivo do erro: " + error.message);
