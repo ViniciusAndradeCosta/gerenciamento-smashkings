@@ -25,7 +25,7 @@ export default function EstoquePage() {
   const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
   const [editQtd, setEditQtd] = useState(''); 
   const [editQtdsUnidades, setEditQtdsUnidades] = useState<Record<string, string>>({}); 
-  const [editMinimo, setEditMinimo] = useState(''); // Novo: Estoque Mínimo
+  const [editMinimo, setEditMinimo] = useState(''); 
   const [salvando, setSalvando] = useState(false);
 
   async function carregarDados() {
@@ -64,13 +64,11 @@ export default function EstoquePage() {
     setSalvando(true);
 
     try {
-      // 1. Salva o Estoque Mínimo de Alerta no Ingrediente
       const minVal = Number(editMinimo.replace(',', '.'));
       if (!isNaN(minVal) && minVal >= 0) {
         await supabase.from('ingredientes').update({ estoque_minimo: minVal }).eq('id', ingredienteId);
       }
 
-      // 2. Salva as quantidades nas Unidades
       if (unidadeFiltro === 'Todas') {
         for (const u of unidades) {
           const valStr = editQtdsUnidades[u.id] || '0';
@@ -137,24 +135,34 @@ export default function EstoquePage() {
         .tabela-estoque td { padding: 16px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 
         .modal-input { background: var(--bg); border: 1px solid var(--gold); color: var(--txt); border-radius: 4px; outline: none; padding: 6px; width: 100%; box-sizing: border-box; text-align: center; }
-        .btn-sm { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; }
+        .btn-sm { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; white-space: nowrap; }
         .btn-sm.gold { background: var(--gold); color: #000; }
         .btn-sm.surf { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
 
         .qtd-wrap { display: flex; gap: 4px; align-items: center; }
         .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
         
-        .badge-status { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; display: inline-block; margin-left: 8px; white-space: nowrap; }
+        /* Flexbox para garantir que a tag fique ao lado do número */
+        .estoque-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .badge-status { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; display: inline-block; white-space: nowrap; }
+
+        .pad-l { padding-left: 20px !important; }
+        .pad-r { padding-right: 20px !important; text-align: right; }
 
         @media (max-width: 768px) {
-          .tabela-estoque { font-size: 12px; min-width: 100%; }
-          .tabela-estoque th, .tabela-estoque td { padding: 12px 6px; font-size: 11px; }
-          .hide-mobile { display: none; }
+          .tabela-estoque { font-size: 11px; min-width: 100%; }
+          .tabela-estoque th, .tabela-estoque td { padding: 10px 4px; font-size: 11px; }
+          .hide-mobile { display: none !important; } /* Apenas Custo Médio será ocultado no celular */
           .modal-input { padding: 6px 2px; font-size: 11px; }
-          .btn-sm { padding: 6px 6px; font-size: 10px; flex: 1; text-align: center; }
+          .btn-sm { padding: 8px 6px; font-size: 10px; }
+          
           .qtd-wrap { flex-direction: column; align-items: stretch; gap: 2px; }
-          .action-cell { flex-direction: column; align-items: stretch; gap: 4px; }
-          .badge-status { margin-left: 0; margin-top: 6px; }
+          .action-cell { flex-direction: column; align-items: stretch; gap: 6px; }
+          
+          .badge-status { font-size: 10px; padding: 2px 6px; }
+
+          .pad-l { padding-left: 8px !important; }
+          .pad-r { padding-right: 8px !important; }
         }
       `}} />
 
@@ -190,11 +198,12 @@ export default function EstoquePage() {
             <table className="tabela-estoque">
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <th style={{ paddingLeft: '20px' }}>Insumo / Produto</th>
+                  <th className="pad-l">Insumo / Produto</th>
                   <th>Estoque Atual</th>
+                  {/* Custo Médio fica oculto no mobile, mas Valor em Estoque continua visível */}
                   <th className="hide-mobile">Custo Médio</th>
                   <th>Valor em Estoque</th>
-                  <th style={{ paddingRight: '20px', textAlign: 'right' }}>Ações</th>
+                  <th className="pad-r">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -204,7 +213,6 @@ export default function EstoquePage() {
                   ingredientesFiltrados.map(ing => {
                     const estoquesDoIngrediente = estoques.filter(e => e.ingrediente_id === ing.id);
                     
-                    // Cálculo do estoque geral (Soma de tudo) e do estoque visível (Filtro)
                     const qtdGeralTotal = estoquesDoIngrediente.reduce((acc, e) => acc + (Number(e.quantidade) || 0), 0);
                     let qtdAtual = 0;
 
@@ -215,7 +223,6 @@ export default function EstoquePage() {
                       if (estUni) qtdAtual = Number(estUni.quantidade);
                     }
 
-                    // A LÓGICA CORRIGIDA DO STATUS ESTÁ AQUI
                     const minimo = Number(ing.estoque_minimo || 0);
                     let statusColor = '';
                     let statusText = '';
@@ -227,7 +234,6 @@ export default function EstoquePage() {
                       statusColor = 'var(--gold)';
                       statusText = 'Acabando';
                     } else {
-                      // Se tem mais de zero e não bateu no mínimo, tá tudo certo
                       statusColor = 'var(--grn)';
                       statusText = 'Normal';
                     }
@@ -239,63 +245,62 @@ export default function EstoquePage() {
                       <tr key={ing.id} style={{ background: isEditing ? 'rgba(255,255,255,0.05)' : 'transparent', transition: 'background 0.2s' }}>
                         
                         {/* COLUNA NOME */}
-                        <td style={{ paddingLeft: '20px', color: 'var(--txt)' }}>
-                          <b style={{ fontSize: 15, display: 'block' }}>{ing.nome}</b>
+                        <td className="pad-l" style={{ color: 'var(--txt)' }}>
+                          <b style={{ fontSize: 13, display: 'block' }}>{ing.nome}</b>
                         </td>
 
                         {/* COLUNA ESTOQUE E STATUS */}
                         <td style={{ color: 'var(--txt)' }}>
                           {isEditing ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                              
-                              {/* Edição de Quantidades */}
                               {unidadeFiltro === 'Todas' ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                   {unidades.map(u => (
                                     <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                       <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)' }} />
-                                      <span style={{ fontSize: '12px', color: 'var(--txt)', minWidth: '70px' }}>{u.nome}:</span>
-                                      <input type="text" className="modal-input" value={editQtdsUnidades[u.id] || '0'} onChange={(e) => setEditQtdsUnidades({ ...editQtdsUnidades, [u.id]: e.target.value })} style={{ width: '70px' }} />
+                                      <span style={{ fontSize: '11px', color: 'var(--txt)', minWidth: '50px' }}>{u.nome}:</span>
+                                      <input type="text" className="modal-input" value={editQtdsUnidades[u.id] || '0'} onChange={(e) => setEditQtdsUnidades({ ...editQtdsUnidades, [u.id]: e.target.value })} style={{ width: '50px' }} />
                                       <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
                                     </div>
                                   ))}
                                 </div>
                               ) : (
                                 <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editQtd} onChange={(e) => setEditQtd(e.target.value)} autoFocus style={{ width: '80px' }} />
+                                  <input type="text" className="modal-input" value={editQtd} onChange={(e) => setEditQtd(e.target.value)} autoFocus style={{ width: '60px' }} />
                                   <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
                                 </div>
                               )}
 
-                              {/* Definição do Alerta Mínimo */}
                               <div style={{ paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
                                 <span style={{ fontSize: '11px', color: 'var(--gold)', display: 'block', marginBottom: '4px' }}>Alerta de Mínimo:</span>
                                 <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editMinimo} onChange={(e) => setEditMinimo(e.target.value)} style={{ width: '80px', borderColor: 'var(--dim)' }} placeholder="Ex: 5" />
+                                  <input type="text" className="modal-input" value={editMinimo} onChange={(e) => setEditMinimo(e.target.value)} style={{ width: '60px', borderColor: 'var(--dim)' }} placeholder="Ex: 5" />
                                   <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
                                 </div>
                               </div>
                             </div>
                           ) : (
                             <div>
-                              <span style={{ fontWeight: 'bold', fontSize: '15px' }}>
-                                {num(qtdAtual, 3)} <span style={{ fontSize: '11px', color: 'var(--dim)', fontWeight: 'normal' }}>{ing.unidade_medida}</span>
-                              </span>
+                              <div className="estoque-info">
+                                <span style={{ fontWeight: 'bold', fontSize: '13px' }}>
+                                  {num(qtdAtual, 3)} <span style={{ fontSize: '10px', color: 'var(--dim)', fontWeight: 'normal' }}>{ing.unidade_medida}</span>
+                                </span>
+                                
+                                {statusText && (
+                                  <span className="badge-status" style={{ border: `1px solid ${statusColor}`, color: statusColor, background: 'rgba(255,255,255,0.05)' }}>
+                                    {statusText}
+                                  </span>
+                                )}
+                              </div>
                               
-                              {/* BADGE DE STATUS */}
-                              <span className="badge-status" style={{ border: `1px solid ${statusColor}`, color: statusColor, background: 'rgba(255,255,255,0.05)' }}>
-                                {statusText}
-                              </span>
-                              
-                              {/* BADGES POR UNIDADE */}
                               <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
                                 {unidadeFiltro === 'Todas' ? (
                                   estoquesDoIngrediente.map(est => {
                                     const u = unidades.find(uni => uni.id === est.unidade_id);
                                     if (!u || Number(est.quantidade) <= 0) return null;
                                     return (
-                                      <span key={est.unidade_id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', background: 'var(--surf)', padding: '3px 8px', borderRadius: '12px', border: '1px solid var(--line)', whiteSpace: 'nowrap' }}>
-                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)' }} />
+                                      <span key={est.unidade_id} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', background: 'var(--surf)', padding: '2px 6px', borderRadius: '12px', border: '1px solid var(--line)', whiteSpace: 'nowrap' }}>
+                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)', width: '6px', height: '6px' }} />
                                         <b style={{ color: 'var(--txt)' }}>{u.nome}:</b> {num(est.quantidade, 2)} {ing.unidade_medida}
                                       </span>
                                     );
@@ -304,8 +309,8 @@ export default function EstoquePage() {
                                   (() => {
                                     const u = unidades.find(uni => uni.id === unidadeFiltro);
                                     return u ? (
-                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', background: 'var(--surf)', padding: '3px 8px', borderRadius: '12px', border: '1px solid var(--line)' }}>
-                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)' }} />
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', background: 'var(--surf)', padding: '2px 6px', borderRadius: '12px', border: '1px solid var(--line)' }}>
+                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)', width: '6px', height: '6px' }} />
                                         {u.nome}
                                       </span>
                                     ) : null;
@@ -316,15 +321,17 @@ export default function EstoquePage() {
                           )}
                         </td>
 
+                        {/* CUSTO MÉDIO (Oculto no celular) */}
                         <td className="hide-mobile" style={{ color: 'var(--dim)' }}>
                           {brl(custo)}
                         </td>
                         
+                        {/* VALOR EM ESTOQUE (Visível no celular) */}
                         <td style={{ color: 'var(--txt)', fontWeight: 'bold' }}>
                           {brl(qtdAtual * custo)}
                         </td>
 
-                        <td style={{ paddingRight: '20px', textAlign: 'right', verticalAlign: 'top' }}>
+                        <td className="pad-r" style={{ verticalAlign: 'top' }}>
                           <div className="action-cell">
                             {isEditing ? (
                               <>

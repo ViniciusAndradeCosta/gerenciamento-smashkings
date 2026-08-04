@@ -173,7 +173,6 @@ export default function ProdutosPage() {
 
   return (
     <>
-      {/* Exibe o botão de Custo Fixo apenas nesta página */}
       <TopBar titulo="Gerenciamento de Produtos" showCustoFixo={true} />
 
       <style dangerouslySetInnerHTML={{__html: `
@@ -181,6 +180,16 @@ export default function ProdutosPage() {
         .scroll-chips::-webkit-scrollbar-track { background: transparent; }
         .scroll-chips::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
         .scroll-chips::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+        /* CLASSES RESPONSIVAS PARA O FORMULÁRIO */
+        .form-row-2-1-1 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+        .form-row-1-1-1 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .input-group { display: flex; flex-direction: column; justify-content: flex-end; }
+
+        @media (max-width: 768px) {
+          /* No celular, empilha os campos um debaixo do outro para não espremer */
+          .form-row-2-1-1, .form-row-1-1-1 { grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
+        }
       `}} />
 
       <div className="wrap">
@@ -188,13 +197,15 @@ export default function ProdutosPage() {
 
         <div className="panel" style={{ padding: '20px', marginBottom: '24px' }}>
           <form onSubmit={handleCadastrar}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 15, marginBottom: 15 }}>
-              <div>
+            
+            {/* LINHA 1 */}
+            <div className="form-row-2-1-1">
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Nome do Produto</label>
                 <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: King Classic Simples" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
               </div>
 
-              <div>
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Categoria</label>
                 <select value={categoria} onChange={(e) => setCategoria(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required>
                   <option value="">Selecione...</option>
@@ -202,31 +213,31 @@ export default function ProdutosPage() {
                 </select>
               </div>
 
-              <div>
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Preço de Venda (R$)</label>
                 <input type="text" placeholder="0,00" value={precoVenda} onChange={(e) => setPrecoVenda(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
               </div>
             </div>
 
-            {/* IDS DE INTEGRAÇÃO (CONSUMER, GOOMER, IFOOD) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 15, marginBottom: 20 }}>
-              <div>
+            {/* LINHA 2 (IDS DE INTEGRAÇÃO) */}
+            <div className="form-row-1-1-1">
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Consumer (Bela Vista)</label>
                 <input type="text" value={idConsumer} onChange={(e) => setIdConsumer(e.target.value)} placeholder="Ex: 105" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
               </div>
 
-              <div>
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Goomer (João Monlevade)</label>
                 <input type="text" value={idGoomer} onChange={(e) => setIdGoomer(e.target.value)} placeholder="Ex: 992" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
               </div>
 
-              <div>
+              <div className="input-group">
                 <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID iFood</label>
                 <input type="text" value={idIfood} onChange={(e) => setIdIfood(e.target.value)} placeholder="Ex: 504" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
               </div>
             </div>
 
-            <button type="submit" disabled={carregando} style={{ width: '100%', padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+            <button type="submit" disabled={carregando} style={{ width: '100%', padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '8px' }}>
               {carregando ? 'Cadastrando...' : '+ Cadastrar Produto'}
             </button>
           </form>
@@ -277,47 +288,47 @@ export default function ProdutosPage() {
       {/* MODAL DE EDIÇÃO */}
       {produtoEditando && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="panel" style={{ width: '100%', maxWidth: '650px', padding: '24px', borderRadius: '12px', background: 'var(--bg)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', border: '1px solid var(--line)' }}>
+          <div className="panel custom-scroll" style={{ width: '100%', maxWidth: '650px', padding: '24px', borderRadius: '12px', background: 'var(--bg)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', border: '1px solid var(--line)', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h3 style={{ margin: 0, color: 'var(--txt)' }}>Editar Produto</h3>
               <button onClick={() => setProdutoEditando(null)} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
 
             <form onSubmit={handleSalvarEdicao}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 15, marginBottom: 15 }}>
-                <div>
+              <div className="form-row-2-1-1">
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Nome do Produto</label>
                   <input type="text" value={editNome} onChange={(e) => setEditNome(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
                 </div>
-                <div>
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Categoria</label>
                   <select value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required>
                     <option value="">Selecione...</option>
                     {CATEGORIAS.map((cat) => ( <option key={cat} value={cat}>{cat}</option> ))}
                   </select>
                 </div>
-                <div>
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Preço de Venda (R$)</label>
                   <input type="text" value={editPrecoVenda} onChange={(e) => setEditPrecoVenda(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 15, marginBottom: 20 }}>
-                <div>
+              <div className="form-row-1-1-1">
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Consumer</label>
                   <input type="text" value={editIdConsumer} onChange={(e) => setEditIdConsumer(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
                 </div>
-                <div>
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Goomer</label>
                   <input type="text" value={editIdGoomer} onChange={(e) => setEditIdGoomer(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
                 </div>
-                <div>
+                <div className="input-group">
                   <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID iFood</label>
                   <input type="text" value={editIdIfood} onChange={(e) => setEditIdIfood(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 10, marginTop: '8px' }}>
                 <button type="submit" disabled={salvandoEdicao} style={{ flex: 1, padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
                   {salvandoEdicao ? 'Salvando...' : 'Salvar Alterações'}
                 </button>
