@@ -73,7 +73,7 @@ export default function ProdutosPage() {
     e.preventDefault();
     setCarregando(true);
 
-    const { data: config } = await supabase.from('configuracoes_loja').select('*').limit(1).single();
+    const { data: config } = await supabase.from('configuracoes_loja').select('*').limit(1).maybeSingle();
 
     const payload = {
       nome: nome.trim(),
@@ -150,7 +150,9 @@ export default function ProdutosPage() {
       .update({ ativo: !prod.ativo })
       .eq('id', prod.id);
 
-    if (!error) {
+    if (error) {
+      alert('Erro ao alterar status: ' + error.message);
+    } else {
       carregarProdutos();
     }
   }
@@ -159,7 +161,10 @@ export default function ProdutosPage() {
     if (!confirm(`Tem certeza que deseja apagar o produto "${nomeProd}"?`)) return;
     const { error } = await supabase.from('produtos').delete().eq('id', id);
     if (error) {
-      alert('Erro ao apagar produto: ' + error.message);
+      // 23503 = chave estrangeira: o produto já aparece em vendas
+      alert(error.code === '23503'
+        ? 'Este produto já tem vendas registradas e não pode ser apagado. Use "Desativar".'
+        : 'Erro ao apagar produto: ' + error.message);
     } else {
       carregarProdutos();
     }

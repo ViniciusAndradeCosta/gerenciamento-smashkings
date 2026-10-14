@@ -8,18 +8,19 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Compras({ searchParams }: { searchParams: { u?: string; modo?: string } }) {
-  const supabase = createClient();
+export default async function Compras({ searchParams }: { searchParams: Promise<{ u?: string; modo?: string }> }) {
+  const { u, modo } = await searchParams;
+  const supabase = await createClient();
   const [{ data: unidades }, { data: ingredientes }, { data: fornecedores }] = await Promise.all([
     supabase.from('unidades').select('*').order('codigo'),
     supabase.from('ingredientes').select('*').order('nome'),
     supabase.from('fornecedores').select('*').order('nome'),
   ]);
 
-  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
-  
+  const alvo = (unidades || []).find((x) => x.codigo === u);
+
   // Verifica qual aba está ativa (manual ou ocr)
-  const modoAtual = searchParams.modo || 'manual';
+  const modoAtual = modo || 'manual';
 
   let rq = supabase
     .from('compras')

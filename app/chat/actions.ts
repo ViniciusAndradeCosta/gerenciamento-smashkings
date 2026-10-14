@@ -29,7 +29,7 @@ type Resumo = {
 
 /** Junta os números do negócio a partir do Supabase (respeita o RLS do usuário). */
 async function montarResumo(): Promise<Resumo> {
-  const supabase = createClient();
+  const supabase = await createClient();
   const hj = hoje();
   const ont = ontem();
   const desde = inicioDoMes();
@@ -241,8 +241,12 @@ Resumo rápido: hoje ${brl(r.faturamentoHoje)} • mês ${brl(r.faturamentoMes)}
 
 /** Responde uma pergunta do gerente. Usa o Gemini se a chave existir; senão, modo local. */
 export async function perguntar(pergunta: string, historico: Mensagem[] = []): Promise<Resposta> {
-  const texto = (pergunta || '').trim();
+  const texto = (pergunta || '').trim().slice(0, 1000);
   if (!texto) return { ok: false, erro: 'Escreva uma pergunta.' };
+  // A action é um endpoint público: limita o que vai para o Gemini
+  historico = (Array.isArray(historico) ? historico : [])
+    .slice(-8)
+    .map((m) => ({ autor: m?.autor === 'user' ? 'user' : 'assistant', texto: String(m?.texto || '').slice(0, 2000) }));
 
   let resumo: Resumo;
   try {

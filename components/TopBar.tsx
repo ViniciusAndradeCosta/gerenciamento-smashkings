@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import UnitSwitcher from './UnitSwitcher';
+import type { Unidade } from '@/lib/types';
 
 function IcoSair({ size = 18 }: { size?: number }) {
   return (
@@ -24,7 +26,10 @@ function IcoCustos({ size = 18 }: { size?: number }) {
   );
 }
 
-export default function TopBar({ titulo, showCustoFixo = false }: { titulo: string; showCustoFixo?: boolean }) {
+/** Topo das telas internas. Passe `unidades` só onde o filtro por unidade faz sentido. */
+export default function TopBar({
+  titulo, showCustoFixo = false, unidades,
+}: { titulo: string; showCustoFixo?: boolean; unidades?: Unidade[] }) {
   const router = useRouter();
   const supabase = createClient();
   
@@ -91,24 +96,24 @@ export default function TopBar({ titulo, showCustoFixo = false }: { titulo: stri
 
     try {
       if (configId) {
-        await supabase
+        const { error } = await supabase
           .from('configuracoes_loja')
-          .update({ 
-            custo_fixo_padrao: valFixo, 
-            custo_salao_padrao: valFixo, 
-            updated_at: new Date() 
-          })
+          .update({ custo_fixo_padrao: valFixo, updated_at: new Date().toISOString() })
           .eq('id', configId);
+        if (error) throw error;
       } else {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('configuracoes_loja')
-          .insert([{ custo_fixo_padrao: valFixo, custo_salao_padrao: valFixo }])
+          .insert([{ custo_fixo_padrao: valFixo }])
           .select();
+        if (error) throw error;
         if (data && data[0]) setConfigId(data[0].id);
       }
 
-      await supabase.from('produtos').update({ custo_fixo: valFixo }).neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('ingredientes').update({ custo_fixo: valFixo }).eq('e_produzido_internamente', true);
+      const { error: erroProdutos } = await supabase.from('produtos').update({ custo_fixo: valFixo }).neq('id', '00000000-0000-0000-0000-000000000000');
+      if (erroProdutos) throw erroProdutos;
+      const { error: erroPreparos } = await supabase.from('ingredientes').update({ custo_fixo: valFixo }).eq('e_produzido_internamente', true);
+      if (erroPreparos) throw erroPreparos;
 
       alert(`✅ Custo Fixo de R$ ${custoFixo} salvo com sucesso!`);
       setShowModal(false);
@@ -192,6 +197,12 @@ export default function TopBar({ titulo, showCustoFixo = false }: { titulo: stri
           </button>
         </div>
       </header>
+
+      {unidades && unidades.length > 0 && (
+        <Suspense fallback={<div className="useg" />}>
+          <UnitSwitcher unidades={unidades} />
+        </Suspense>
+      )}
 
       {/* MODAL DE CUSTO FIXO */}
       {showModal && (

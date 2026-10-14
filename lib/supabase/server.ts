@@ -5,8 +5,8 @@ import { cookies } from 'next/headers';
 // consegue inferir o parâmetro sozinho — daí a anotação explícita.
 type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 
-export function createClient() {
-  const cookieStore = cookies();
+export async function createClient() {
+  const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

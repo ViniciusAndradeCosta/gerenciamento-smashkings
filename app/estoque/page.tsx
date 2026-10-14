@@ -30,14 +30,18 @@ export default function EstoquePage() {
 
   async function carregarDados() {
     setCarregando(true);
-    const [resUni, resIng, resEst] = await Promise.all([
+    const [resUni, resIng, resEst, resCusto] = await Promise.all([
       supabase.from('unidades').select('*').order('nome'),
       supabase.from('ingredientes').select('*').order('nome'),
-      supabase.from('estoque').select('*')
+      supabase.from('estoque').select('*'),
+      supabase.from('v_custo_ingrediente').select('ingrediente_id, custo_unitario'),
     ]);
 
+    // Custo efetivo: CMP para insumos comprados e custo do lote / rendimento
+    // para preparos (que não têm compra e ficariam com custo zero).
+    const custoDe = new Map((resCusto.data || []).map((c) => [c.ingrediente_id, Number(c.custo_unitario)]));
     if (resUni.data) setUnidades(resUni.data);
-    if (resIng.data) setIngredientes(resIng.data);
+    if (resIng.data) setIngredientes(resIng.data.map((i) => ({ ...i, custo_medio: custoDe.get(i.id) ?? i.custo_medio })));
     if (resEst.data) setEstoques(resEst.data);
     setCarregando(false);
   }
@@ -63,10 +67,16 @@ export default function EstoquePage() {
   async function salvarAjuste(ingredienteId: string) {
     setSalvando(true);
 
+    // O supabase-js não lança exceção: devolve { error }. Sem checar, uma
+    // falha (ex.: gerente ajustando outra unidade) parecia ter sido salva.
+    const conferir = ({ error }: { error: { message: string } | null }) => {
+      if (error) throw new Error(error.message);
+    };
+
     try {
       const minVal = Number(editMinimo.replace(',', '.'));
       if (!isNaN(minVal) && minVal >= 0) {
-        await supabase.from('ingredientes').update({ estoque_minimo: minVal }).eq('id', ingredienteId);
+        conferir(await supabase.from('ingredientes').update({ estoque_minimo: minVal }).eq('id', ingredienteId));
       }
 
       if (unidadeFiltro === 'Todas') {
@@ -77,9 +87,11 @@ export default function EstoquePage() {
 
           const match = estoques.find(e => e.unidade_id === u.id && e.ingrediente_id === ingredienteId);
           if (match) {
-            await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', u.id).eq('ingrediente_id', ingredienteId);
+            if (Number(match.quantidade) === val) continue;
+            conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', u.id).eq('ingrediente_id', ingredienteId));
           } else {
-            await supabase.from('estoque').insert({ unidade_id: u.id, ingrediente_id: ingredienteId, quantidade: val });
+            if (val === 0) continue;
+            conferir(await supabase.from('estoque').insert({ unidade_id: u.id, ingrediente_id: ingredienteId, quantidade: val }));
           }
         }
       } else {
@@ -92,9 +104,9 @@ export default function EstoquePage() {
 
         const match = estoques.find(e => e.unidade_id === unidadeFiltro && e.ingrediente_id === ingredienteId);
         if (match) {
-          await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', unidadeFiltro).eq('ingrediente_id', ingredienteId);
+          conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', unidadeFiltro).eq('ingrediente_id', ingredienteId));
         } else {
-          await supabase.from('estoque').insert({ unidade_id: unidadeFiltro, ingrediente_id: ingredienteId, quantidade: val });
+          conferir(await supabase.from('estoque').insert({ unidade_id: unidadeFiltro, ingrediente_id: ingredienteId, quantidade: val }));
         }
       }
 
@@ -226,11 +238,12 @@ export default function EstoquePage() {
                     const minimo = Number(ing.estoque_minimo || 0);
                     let statusColor = '';
                     let statusText = '';
-                    
-                    if (qtdGeralTotal <= 0) {
+
+                    // Com uma unidade filtrada, o status é o daquela unidade
+                    if (qtdAtual <= 0) {
                       statusColor = 'var(--red)';
                       statusText = 'Esgotado';
-                    } else if (minimo > 0 && qtdGeralTotal <= minimo) {
+                    } else if (minimo > 0 && qtdAtual <= minimo) {
                       statusColor = 'var(--gold)';
                       statusText = 'Acabando';
                     } else {

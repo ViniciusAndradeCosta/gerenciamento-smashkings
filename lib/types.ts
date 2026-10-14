@@ -11,6 +11,6 @@ export type Alerta = {
   unidade_medida: string; status: 'ok' | 'baixo' | 'critico' | 'sem_estoque';
 };
 export type CustoProduto = {
-  produto_id: string; nome: string; preco_venda: number; custo_extra: number;
+  produto_id: string; nome: string; preco_venda: number; custo_fixo: number;
   custo_ingredientes: number; custo_total: number; cmv_percent: number; margem_percent: number;
 };

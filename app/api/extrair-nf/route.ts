@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient } from '@/lib/supabase/server';
 
-// Inicializa a SDK do Google Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+// Leitura de imagem pelo Gemini (com as tentativas) pode passar dos 10s
+// padrão da Vercel.
+export const maxDuration = 60;
+
+// Mesmo modelo do chat; pode trocar via GEMINI_MODEL no ambiente.
+const MODELO = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+
+const TIPOS_ACEITOS = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+const TAMANHO_MAX = 4 * 1024 * 1024; // a Vercel recusa corpos acima de ~4,5 MB
 
 // --- SISTEMA DE RETRY (TENTATIVAS) ---
 async function gerarConteudoComRetry(model: any, prompt: string, imagePart: any, tentativas = 3) {
@@ -11,14 +19,14 @@ async function gerarConteudoComRetry(model: any, prompt: string, imagePart: any,
       const result = await model.generateContent([prompt, imagePart]);
       return result;
     } catch (error: any) {
-      if (i === tentativas - 1) throw error; 
-      
+      if (i === tentativas - 1) throw error;
+
       // Se der o erro 503 antigo (High Demand), espera 2 segundos e tenta de novo
       if (error.message?.includes('503') || error.message?.includes('high demand') || error.message?.includes('overloaded')) {
         console.log(`[Tentativa ${i + 1}/${tentativas}] Gemini ocupado. Aguardando 2 segundos...`);
         await new Promise(resolve => setTimeout(resolve, 2000));
       } else {
-        throw error; 
+        throw error;
       }
     }
   }
@@ -26,16 +34,29 @@ async function gerarConteudoComRetry(model: any, prompt: string, imagePart: any,
 
 export async function POST(req: Request) {
   try {
+    // Só usuários logados (a chave do Gemini é paga por uso/cota)
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Sessão expirada. Entre de novo.' }, { status: 401 });
+    }
+
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json({ error: 'Chave da API do Gemini não configurada no servidor.' }, { status: 500 });
     }
 
     const formData = await req.formData();
-    const file = formData.get('file') as File;
-    const instrucoesExtras = formData.get('instrucoes_extras') as string || '';
+    const file = formData.get('file');
+    const instrucoesExtras = String(formData.get('instrucoes_extras') || '').slice(0, 2000);
 
-    if (!file) {
+    if (!(file instanceof File)) {
       return NextResponse.json({ error: 'Nenhuma imagem ou arquivo foi enviado.' }, { status: 400 });
+    }
+    if (!TIPOS_ACEITOS.includes(file.type)) {
+      return NextResponse.json({ error: 'Formato não suportado. Envie uma foto (JPG/PNG) ou PDF.' }, { status: 400 });
+    }
+    if (file.size > TAMANHO_MAX) {
+      return NextResponse.json({ error: 'Arquivo muito grande (máx. 4 MB).' }, { status: 413 });
     }
 
     // Prepara a imagem para a IA
@@ -48,16 +69,14 @@ export async function POST(req: Request) {
       }
     };
 
-    // Retornando para a versão que o seu projeto já aceita e reconhece
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-flash-latest'
-    });
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: MODELO });
 
     // Monta a regra incluindo a blindagem de marcas e pesos
     const prompt = `
       Você é um assistente de extração de dados de notas fiscais de supermercado/fornecedores.
       Analise a imagem da nota fiscal ou cupom fiscal anexada.
-      
+
       Extraia os produtos comprados e retorne APENAS um array JSON puro, onde cada objeto tem o seguinte formato exato:
       [
         {
@@ -73,28 +92,41 @@ export async function POST(req: Request) {
       - A quantidade deve ser um número (float).
       - O preco_total deve ser o valor total do item numérico (float).
       - unidade_medida deve ser preferencialmente UN, KG, L, G, ML.
-      
+
       ${instrucoesExtras}
     `;
 
     // Chama a IA protegida pelo sistema de tentativas
     const result = await gerarConteudoComRetry(model, prompt, imagePart);
-    let textoResult = result.response.text();
+    const textoResult: string = result.response.text();
 
-    // Faxina extra caso a IA desobedeça e mande formatação de texto em volta do JSON
-    textoResult = textoResult.replace(/```json/gi, '').replace(/```/g, '').trim();
+    // Faxina caso a IA desobedeça e mande texto/markdown em volta do JSON
+    const inicio = textoResult.indexOf('[');
+    const fim = textoResult.lastIndexOf(']');
+    if (inicio === -1 || fim < inicio) {
+      return NextResponse.json({ error: 'Não consegui identificar itens nessa imagem. Tente uma foto mais nítida.' }, { status: 422 });
+    }
 
-    const jsonExtraido = JSON.parse(textoResult);
+    const jsonExtraido = JSON.parse(textoResult.slice(inicio, fim + 1));
+    if (!Array.isArray(jsonExtraido)) {
+      return NextResponse.json({ error: 'A leitura da nota veio num formato inesperado. Tente de novo.' }, { status: 422 });
+    }
 
-    const dadosFormatados = jsonExtraido.map((item: any) => ({
-      ...item,
-      id_temp: Math.random().toString(36).substring(7)
-    }));
+    const paraNumero = (v: unknown) => Number(String(v ?? '').replace(',', '.'));
+    const dadosFormatados = jsonExtraido
+      .filter((item: any) => item && typeof item.nome === 'string' && item.nome.trim())
+      .map((item: any) => ({
+        nome: item.nome.trim(),
+        quantidade: paraNumero(item.quantidade) || 0,
+        unidade_medida: String(item.unidade_medida || 'UN').toUpperCase(),
+        preco_total: paraNumero(item.preco_total) || 0,
+        id_temp: Math.random().toString(36).substring(7)
+      }));
 
     return NextResponse.json(dadosFormatados);
 
   } catch (error: any) {
     console.error('Erro na API extrair-nf:', error);
-    return NextResponse.json({ error: 'Falha ao extrair dados da nota.', detalhe: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Falha ao extrair dados da nota. Tente de novo em instantes.' }, { status: 500 });
   }
 }

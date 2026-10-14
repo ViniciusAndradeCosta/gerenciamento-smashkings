@@ -10,6 +10,7 @@
   --gold:#f7c915; --goldg:linear-gradient(160deg,#ffd94a,#f2b207);
   --gdim:rgba(247,201,21,.13);
   --ink:#14120a; --txt:#f6f3ec; --mut:#8f8a7e; --mut2:#5f5b53;
+  --dim:var(--mut); /* usado nas telas de estoque, fichas, preparos e produtos */
   --red:#ff5a4d; --rdim:rgba(255,90,77,.13);
   --grn:#79e0a0; --ndim:rgba(121,224,160,.13);
   --cond:var(--font-cond),'Barlow Condensed',sans-serif;
