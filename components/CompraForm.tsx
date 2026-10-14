@@ -19,11 +19,13 @@ export default function CompraForm({
   
   const [quantidade, setQuantidade] = useState('');
   const [precoUnitario, setPrecoUnitario] = useState('');
+  const [medidaNova, setMedidaNova] = useState('UN');
   const [carregando, setCarregando] = useState(false);
 
   // Descobre a unidade de medida se o ingrediente já existir na lista
   const ingEncontrado = ingredientes.find(i => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim());
-  const siglaMedida = ingEncontrado?.unidade_medida || 'UN';
+  const ingredienteNovo = !ingEncontrado && ingredienteInput.trim() !== '';
+  const siglaMedida = ingEncontrado?.unidade_medida || medidaNova;
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
@@ -51,9 +53,9 @@ export default function CompraForm({
         const { data: novoIng, error: erroIng } = await supabase
           .from('ingredientes')
           .insert({ 
-            nome: ingredienteInput.trim(), 
-            unidade_medida: 'UN', // Padrão inicial caso seja criado manualmente
-            ativo: true 
+            nome: ingredienteInput.trim(),
+            unidade_medida: medidaNova,
+            ativo: true
           })
           .select('id')
           .single();
@@ -93,7 +95,11 @@ export default function CompraForm({
           preco_unitario: Number(precoUnitario.replace(',', '.'))
         });
 
-      if (erroCompra) throw new Error("Erro ao salvar compra: " + erroCompra.message);
+      if (erroCompra) {
+        throw new Error(erroCompra.message.includes('row-level security')
+          ? 'Você não tem permissão para lançar compras nesta unidade.'
+          : "Erro ao salvar compra: " + erroCompra.message);
+      }
       
       alert("Compra registrada com sucesso!");
       
@@ -143,6 +149,20 @@ export default function CompraForm({
           ))}
         </datalist>
       </div>
+
+      {/* Insumo novo: escolhe a medida (não dá para mudar depois pela tela) */}
+      {ingredienteNovo && (
+        <div className="field" style={{ marginBottom: 15 }}>
+          <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--gold)' }}>Novo insumo — medida</label>
+          <select
+            value={medidaNova}
+            onChange={(e) => setMedidaNova(e.target.value)}
+            style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
+          >
+            {['UN', 'KG', 'G', 'L', 'ML'].map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      )}
 
       {/* CAMPO HÍBRIDO DE FORNECEDOR (Digitar ou Selecionar) */}
       <div className="field" style={{ marginBottom: 15 }}>

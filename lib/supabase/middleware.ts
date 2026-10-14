@@ -33,6 +33,10 @@ export async function updateSession(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const publica = path.startsWith('/login') || path.startsWith('/_next') || path.startsWith('/manifest') || path === '/favicon.ico';
   if (!user && !publica) {
+    // Chamadas de API esperam JSON; um redirect para a tela de login quebraria o fetch
+    if (path.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Sessão expirada. Entre de novo.' }, { status: 401 });
+    }
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);

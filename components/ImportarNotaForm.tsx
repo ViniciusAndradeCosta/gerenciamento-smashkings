@@ -6,6 +6,26 @@ import { brl, num } from '@/lib/format';
 type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string };
 type ItemNF = { id_temp: string; nome: string; quantidade: number; preco_total: number; unidade_medida: string; ingrediente_id?: string };
 
+// A Vercel recusa requisições acima de ~4,5 MB, e foto de celular passa disso
+// fácil. Reduz a imagem para no máximo 2000px (sobra nitidez para ler a nota).
+const LIMITE_BYTES = 4 * 1024 * 1024;
+async function prepararArquivo(file: File): Promise<File> {
+  if (!file.type.startsWith('image/')) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const escala = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+    if (escala === 1 && file.size < 1.5 * 1024 * 1024) return file;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * escala);
+    canvas.height = Math.round(bitmap.height * escala);
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, 'image/jpeg', 0.85));
+    return blob ? new File([blob], 'nota.jpg', { type: 'image/jpeg' }) : file;
+  } catch {
+    return file; // formato que o navegador não decodifica: envia como está
+  }
+}
+
 export default function ImportarNotaForm({
   unidades, ingredientes
 }: {
@@ -36,8 +56,14 @@ export default function ImportarNotaForm({
     if (!arquivo) return;
     
     setCarregando(true);
+    const envio = await prepararArquivo(arquivo);
+    if (envio.size > LIMITE_BYTES) {
+      alert('Arquivo muito grande (máx. 4 MB). Tire uma foto ou envie um PDF menor.');
+      setCarregando(false);
+      return;
+    }
     const formData = new FormData();
-    formData.append('file', arquivo);
+    formData.append('file', envio);
 
     // --- BLINDAGEM DE IA (Enviando instrução estrita para o backend) ---
     const regraIA = `REGRA CRÍTICA DE EXTRAÇÃO: Ignore nomes de marcas (ex: Vitapão, Sadia, Heinz, Liza), pesos, medidas (ex: 1kg, 500g, 2L, 900ml) e numerações de lote. Extraia e retorne EXCLUSIVAMENTE o nome genérico, limpo e culinário do insumo. Exemplo: Se ler "ACUCAR MASCAVO VITAPAO 1KG", retorne APENAS "Açúcar Mascavo". Formate usando a primeira letra maiúscula em cada palavra.`;
@@ -45,10 +71,21 @@ export default function ImportarNotaForm({
 
     try {
       const res = await fetch('/api/extrair-nf', { method: 'POST', body: formData });
-      let dadosIA = await res.json();
-      
+      // Erros da plataforma (ex.: 413, 504) chegam como texto, não JSON
+      const corpo = await res.text();
+      let dadosIA: any;
+      try {
+        dadosIA = JSON.parse(corpo);
+      } catch {
+        throw new Error(
+          res.status === 413 ? 'Arquivo muito grande para enviar.'
+          : res.status === 504 ? 'A leitura demorou demais. Tente de novo.'
+          : `Resposta inesperada do servidor (${res.status}).`
+        );
+      }
+
       if (!res.ok || dadosIA.error) {
-        throw new Error(dadosIA.detalhe || dadosIA.error || 'Falha na comunicação com o servidor');
+        throw new Error(dadosIA.error || 'Falha na comunicação com o servidor');
       }
       
       // Limpeza preventiva no frontend caso a IA falhe e envie pesos no final (ex: "Açúcar Mascavo 1kg")
@@ -112,16 +149,28 @@ export default function ImportarNotaForm({
     setCarregando(true);
     const supabase = createClient();
     let quantidadeErros = 0;
-    
+    // Insumos criados nesta importação: se a nota tiver duas linhas do mesmo
+    // produto novo, a segunda reaproveita o cadastro em vez de duplicar.
+    const criados = new Map<string, string>();
+
     for (const item of itensExtraidos) {
       let idDoIngrediente = null;
+      const chave = item.nome.toLowerCase().trim();
+
+      if (!(Number(item.quantidade) > 0)) {
+        console.error(`Quantidade inválida no item ${item.nome}`);
+        quantidadeErros++;
+        continue;
+      }
 
       const ingredienteExistente = ingredientes.find(
-        (ing) => ing.nome.toLowerCase().trim() === item.nome.toLowerCase().trim()
+        (ing) => ing.nome.toLowerCase().trim() === chave
       );
 
       if (ingredienteExistente) {
         idDoIngrediente = ingredienteExistente.id;
+      } else if (criados.has(chave)) {
+        idDoIngrediente = criados.get(chave)!;
       } else {
         const { data: novoIngrediente, error: erroCriarIngrediente } = await supabase
           .from('ingredientes')
@@ -140,6 +189,7 @@ export default function ImportarNotaForm({
         }
         
         idDoIngrediente = novoIngrediente.id;
+        criados.set(chave, novoIngrediente.id);
       }
 
       const precoUnitarioCalculado = item.preco_total / (item.quantidade || 1);
@@ -150,7 +200,8 @@ export default function ImportarNotaForm({
           unidade_id: unidadeSelecionada,
           ingrediente_id: idDoIngrediente,
           quantidade: item.quantidade,
-          preco_unitario: precoUnitarioCalculado
+          preco_unitario: precoUnitarioCalculado,
+          origem: 'nota_fiscal'
         });
 
       if (erroCompra) {

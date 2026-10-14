@@ -8,7 +8,7 @@ import {
   IcoComparativo, IcoMais, IcoSair, IcoProdutos, IcoPreparos
 } from './Icons';
 
-type Item = { href: string; label: string; Ico: (p: { size?: number }) => JSX.Element };
+type Item = { href: string; label: string; Ico: (p: { size?: number }) => React.JSX.Element };
 
 const todos: Item[] = [
   { href: '/', label: 'Início', Ico: IcoInicio },

@@ -6,10 +6,11 @@ import { inicioDoMes } from '@/lib/date';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CMV({ searchParams }: { searchParams: { u?: string } }) {
-  const supabase = createClient();
+export default async function CMV({ searchParams }: { searchParams: Promise<{ u?: string }> }) {
+  const { u } = await searchParams;
+  const supabase = await createClient();
   const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
-  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
+  const alvo = (unidades || []).find((x) => x.codigo === u);
   const desde = inicioDoMes();
 
   const { data: custos } = await supabase.from('v_custo_produto').select('produto_id, custo_total');

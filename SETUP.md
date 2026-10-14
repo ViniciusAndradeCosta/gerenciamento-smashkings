@@ -19,8 +19,13 @@ Sem pressa — cada passo tem prints do que clicar. Leva ~15 minutos.
 1. No menu lateral, abra **SQL Editor**.
 2. Clique em **New query**.
 3. Abra o arquivo `supabase/schema.sql`, copie **todo** o conteúdo, cole e clique em **Run**.
-4. Faça o mesmo com `supabase/seed.sql` (dados de exemplo). Rode **depois** do schema.
-5. Deve aparecer "Success". Pronto — banco criado com as 2 unidades e ingredientes.
+4. Deve aparecer "Success". Pronto — banco criado com as 2 unidades (João Monlevade e Bela Vista).
+5. **Só para testar:** o `supabase/seed.sql` enche o sistema com fornecedores, insumos, produtos, compras e vendas **fictícios**. Use num projeto de teste — **não rode no banco que a hamburgueria vai usar**.
+
+### 1.2b Já usa o sistema? (banco existente)
+Rode o `schema.sql` atual no SQL Editor do projeto que vocês já usam. Ele é **idempotente**: cria só as tabelas/colunas que faltam (preparos, configurações, custo médio, categorias, IDs de Consumer/Goomer/iFood…), recria views e regras de segurança e **não apaga nenhum dado**. Depois de rodar:
+- Abra **Table Editor → `perfis`** e confira quem é `admin`. Na versão anterior, **todo mundo que criava conta virava admin** — rebaixe quem não deveria ter acesso total (veja "Como liberar o acesso" abaixo).
+- Se você criou à mão algum trigger próprio para calcular o custo médio, remova-o: o `aplicar_compra` do schema já atualiza o CMP do insumo e o estoque da unidade.
 
 ### 1.3 Pegar as chaves de conexão
 1. Menu lateral → **Project Settings** (engrenagem) → **API**.
@@ -42,17 +47,18 @@ Sem pressa — cada passo tem prints do que clicar. Leva ~15 minutos.
      NEXT_PUBLIC_SUPABASE_URL=https://SEU-PROJETO.supabase.co
      NEXT_PUBLIC_SUPABASE_ANON_KEY=sua-anon-key
      ```
-   - **Opcional (chat com IA):** para o assistente responder em linguagem livre,
-     crie uma chave grátis em https://aistudio.google.com/app/apikey e adicione
-     `GEMINI_API_KEY=sua-chave`. Sem ela, o chat funciona em modo local (responde
-     as perguntas comuns direto do banco).
+   - **Opcional (IA):** para o assistente responder em linguagem livre e para a
+     leitura de nota fiscal, crie uma chave grátis em https://aistudio.google.com/app/apikey
+     e adicione `GEMINI_API_KEY=sua-chave`. Sem ela, o chat funciona em modo local
+     (responde as perguntas comuns direto do banco) e a aba "Nota Fiscal (IA)" avisa
+     que a chave não está configurada.
 3. No terminal:
    ```
    npm install
    npm run dev
    ```
 4. Abra http://localhost:3000 no navegador.
-5. Clique em **"Criar agora"**, cadastre seu e-mail e senha → você entra como **admin**.
+5. Clique em **"Criar agora"**, cadastre seu e-mail e senha → a primeira conta entra como **admin**.
 6. Teste: vá em **Compras**, registre uma compra → volte ao **Estoque** e veja a quantidade e o CMP atualizados automaticamente. 🎉
 
 ---
@@ -61,19 +67,31 @@ Sem pressa — cada passo tem prints do que clicar. Leva ~15 minutos.
 
 Você já tem GitHub e Vercel.
 
-1. Suba a pasta `smashkings` num repositório no GitHub
-   (https://github.com/new → "uploading an existing file" → arraste os arquivos).
+1. O código fica no repositório **público** do GitHub. No plano grátis (Hobby) da
+   Vercel, repositório privado só publica commits do dono da conta; sendo público,
+   os commits do Vinicius e da Laura publicam normalmente.
+   > ⚠️ Como o repositório é público, **nunca** faça commit de `.env.local`, chaves do
+   > Supabase ou do Gemini — elas ficam só nas Environment Variables da Vercel (o
+   > `.gitignore` já ignora os arquivos `.env*.local`).
 2. Acesse https://vercel.com/new → **Import** do repositório.
 3. Em **Environment Variables**, adicione as chaves:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `GEMINI_API_KEY` (opcional — só para o chat com IA)
+   - `GEMINI_API_KEY` (opcional — chat com IA e leitura de nota fiscal)
 4. Clique em **Deploy**. Em ~1 min você recebe o link `https://smashkings.vercel.app`.
+
+> Use sempre a chave **anon public**. A chave `service_role` ignora todas as regras de segurança e **nunca** deve ir para a Vercel nem para o código.
 
 ### Ajuste final no Supabase (para login funcionar no ar)
 1. Supabase → **Authentication** → **URL Configuration**.
 2. Em **Site URL**, coloque o link da Vercel (`https://smashkings.vercel.app`).
-3. Salve.
+3. Em **Redirect URLs**, adicione o mesmo link (o e-mail de confirmação de conta volta para ele).
+4. Salve.
+
+### Criar as contas e fechar o cadastro
+1. Abra o link da Vercel e crie **a sua** conta primeiro — a primeira conta do sistema vira **admin**.
+2. Peça para os gerentes criarem as contas deles. Elas entram como **pendentes** (veem só um aviso de "acesso pendente") até você liberar — veja "Como liberar o acesso" abaixo.
+3. Quando todo mundo tiver conta, desligue novos cadastros: Supabase → **Authentication** → **Sign In / Providers** → desmarque **Allow new users to sign up**. (Mesmo ligado, quem se cadastrar não vê nada sem liberação — mas fechar evita contas estranhas.)
 
 ---
 
@@ -92,11 +110,19 @@ Você já tem GitHub e Vercel.
 Por padrão o Supabase pede confirmação por e-mail. Para testar mais rápido:
 Supabase → Authentication → Providers → Email → desligue **"Confirm email"**.
 
-**"Como transformar alguém em gerente de uma unidade só?"**
-Supabase → Table Editor → tabela `perfis` → edite o `papel` para `gerente` e defina o `unidade_id` da unidade dele. Deixe `unidade_id` vazio para admin (vê tudo).
+**"Como liberar o acesso de alguém?"**
+Supabase → **Table Editor** → tabela `perfis` → ache a pessoa pelo nome e edite o `papel`:
+- `gerente` + `unidade_id` da unidade dele (copie o `id` da tabela `unidades`) → vê e lança só naquela unidade;
+- `admin` → vê e edita todas as unidades;
+- `pendente` → sem acesso (é como toda conta nova começa).
+
+A pessoa precisa sair e entrar de novo para ver a mudança.
 
 **"Os dados são de exemplo?"**
-O `seed.sql` cria dados iniciais para você ver o sistema cheio. Pode apagar quando começar a usar de verdade, ou simplesmente registrar suas compras/vendas por cima.
+Só se você rodar o `seed.sql`, que é para testes. O banco de produção deve receber apenas o `schema.sql` — aí o sistema começa vazio, com as duas unidades, e vai se enchendo com as compras, produtos e fichas que vocês cadastrarem.
+
+**"Por que o faturamento e o CMV aparecem zerados?"**
+Eles dependem das **vendas**, e ainda não existe tela nem integração para lançá-las (veja "Próximos passos" no README). Estoque, compras, custos, fichas e preparos funcionam normalmente.
 
 **"Como funciona o assistente (chat)?"**
 No **botão flutuante 🍔** (canto inferior direito, em qualquer tela), é só perguntar em português — *"quanto vendi hoje?"*, *"qual o

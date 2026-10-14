@@ -6,7 +6,7 @@ import { inicioDoMes } from '@/lib/date';
 export const dynamic = 'force-dynamic';
 
 export default async function Comparativo() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const desde = inicioDoMes();
 
   const [{ data: unidades }, { data: custos }, { data: valorEst }, { data: vendas }] = await Promise.all([

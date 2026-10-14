@@ -43,6 +43,46 @@ export default function PreparosPage() {
   const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
   const [editQtd, setEditQtd] = useState('');
 
+  // Cadastro de novo preparo
+  const [novoNome, setNovoNome] = useState('');
+  const [novaMedida, setNovaMedida] = useState('kg');
+  const [novoRendimento, setNovoRendimento] = useState('');
+  const [criando, setCriando] = useState(false);
+
+  async function handleCriarPreparo(e: React.FormEvent) {
+    e.preventDefault();
+    const nome = novoNome.trim();
+    const rendimento = Number(novoRendimento.replace(',', '.'));
+    if (!nome || isNaN(rendimento) || rendimento <= 0) {
+      alert('Informe o nome e um rendimento maior que zero.');
+      return;
+    }
+    if ([...preparos, ...ingredientesBrutos].some((i) => i.nome.toLowerCase().trim() === nome.toLowerCase())) {
+      alert('Já existe um insumo com esse nome.');
+      return;
+    }
+
+    setCriando(true);
+    const { data: config } = await supabase.from('configuracoes_loja').select('custo_fixo_padrao').limit(1).maybeSingle();
+    const { error } = await supabase.from('ingredientes').insert({
+      nome,
+      unidade_medida: novaMedida,
+      e_produzido_internamente: true,
+      rendimento_receita: rendimento,
+      custo_fixo: config?.custo_fixo_padrao ?? 1.5,
+      ativo: true,
+    });
+    setCriando(false);
+
+    if (error) {
+      alert('Erro ao criar preparo: ' + error.message);
+    } else {
+      setNovoNome('');
+      setNovoRendimento('');
+      await carregarDados();
+    }
+  }
+
   async function carregarDados() {
     setCarregando(true);
     const [resIng, resPreparoItens] = await Promise.all([
@@ -104,7 +144,9 @@ export default function PreparosPage() {
   async function handleRemoverIngrediente(idItem: string) {
     if (!confirm('Remover este insumo da receita de preparo?')) return;
     const { error } = await supabase.from('preparo_itens').delete().eq('id', idItem);
-    if (!error) {
+    if (error) {
+      alert('Erro ao remover: ' + error.message);
+    } else {
       carregarDados();
     }
   }
@@ -191,6 +233,29 @@ export default function PreparosPage() {
       `}} />
 
       <div className="wrap">
+        <div className="lbl">Novo Preparo</div>
+        <div className="panel" style={{ padding: '16px', marginBottom: '8px' }}>
+          <form onSubmit={handleCriarPreparo} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: '2 1 200px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Nome (ex: Molho da Casa)</label>
+              <input type="text" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} required style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
+            </div>
+            <div style={{ flex: '1 1 90px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Medida</label>
+              <select value={novaMedida} onChange={(e) => setNovaMedida(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}>
+                {['kg', 'g', 'L', 'ml', 'un'].map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 120px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Rendimento do lote</label>
+              <input type="text" inputMode="decimal" value={novoRendimento} onChange={(e) => setNovoRendimento(e.target.value)} placeholder="Ex: 2,5" required style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
+            </div>
+            <button type="submit" disabled={criando} style={{ padding: '12px 16px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+              {criando ? 'Criando...' : '+ Criar'}
+            </button>
+          </form>
+        </div>
+
         <div className="lbl">Controle de Insumos Produzidos Internamente</div>
 
         {carregando ? (
@@ -208,6 +273,9 @@ export default function PreparosPage() {
                 </tr>
               </thead>
               <tbody>
+                {preparos.length === 0 && (
+                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--dim)' }}>Nenhum preparo cadastrado. Crie o primeiro acima e depois monte a receita.</td></tr>
+                )}
                 {preparos.map((prep) => {
                   const composicao = itensPreparo.filter((item) => item.insumo_pai_id === prep.id);
                   const temReceita = composicao.length > 0;

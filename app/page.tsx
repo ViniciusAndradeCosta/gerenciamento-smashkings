@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Suspense } from 'react';
 import Hero from '@/components/Hero';
+import TopBar from '@/components/TopBar';
 import UnitSwitcher from '@/components/UnitSwitcher';
 import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
@@ -9,10 +10,37 @@ import { hoje, ontem, inicioDoMes, saudacao } from '@/lib/date';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Dashboard({ searchParams }: { searchParams: { u?: string } }) {
-  const supabase = createClient();
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ u?: string }> }) {
+  const { u } = await searchParams;
+  const supabase = await createClient();
+
+  // Conta criada mas ainda não liberada por um admin: o RLS não deixa ver
+  // nada, então em vez de um painel zerado mostramos o aviso.
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data: perfil } = user
+    ? await supabase.from('perfis').select('papel').eq('id', user.id).maybeSingle()
+    : { data: null };
+  if (perfil?.papel !== 'admin' && perfil?.papel !== 'gerente') {
+    return (
+      <>
+        <TopBar titulo="Acesso pendente" />
+        <div className="wrap">
+          <div className="lbl">Conta aguardando liberação</div>
+          <div className="panel">
+            <div className="panel-body nota">
+              Sua conta <strong>{user?.email}</strong> foi criada, mas ainda não tem acesso aos dados.
+              <br /><br />
+              Peça para o administrador liberar seu acesso (papel <strong>gerente</strong> ou{' '}
+              <strong>admin</strong> na tabela <code>perfis</code> do Supabase) e entre de novo.
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
-  const alvo = (unidades || []).find((x) => x.codigo === searchParams.u);
+  const alvo = (unidades || []).find((x) => x.codigo === u);
 
   const hj = hoje();
   const ont = ontem();
@@ -20,7 +48,6 @@ export default async function Dashboard({ searchParams }: { searchParams: { u?: 
   const porUnidadeDe = (q: any) => (alvo ? q.eq('unidade_id', alvo.id) : q);
 
   const [
-    { data: user },
     { data: vHoje },
     { data: vOntem },
     { data: vMes },
@@ -28,7 +55,6 @@ export default async function Dashboard({ searchParams }: { searchParams: { u?: 
     { data: valorEst },
     { data: alertas },
   ] = await Promise.all([
-    supabase.auth.getUser().then((r) => ({ data: r.data.user })),
     porUnidadeDe(supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hj)),
     porUnidadeDe(supabase.from('vendas').select('valor_total').eq('data_venda', ont)),
     porUnidadeDe(supabase.from('vendas').select('produto_id, quantidade, valor_total').gte('data_venda', desde)),

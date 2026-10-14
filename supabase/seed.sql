@@ -1,5 +1,9 @@
 -- ============================================================
--- SmashKings — Dados de exemplo (rode DEPOIS do schema.sql)
+-- SmashKings — Dados de EXEMPLO (rode DEPOIS do schema.sql)
+--
+-- ⚠️  Só para testar/demonstrar. NÃO rode no banco que a hamburgueria vai
+--     usar de verdade: ele cria fornecedores, insumos, produtos, compras e
+--     vendas fictícios. As unidades já são criadas pelo schema.sql.
 -- ============================================================
 
 -- Unidades (cores alinhadas ao visual do app: dourado da marca + verde)
@@ -15,17 +19,17 @@ insert into fornecedores (nome, telefone) values
   ('Bob Distribuidor', '(00) 0000-0000'),
   ('Frigorífico Central', '(00) 0000-0000');
 
--- Ingredientes
-insert into ingredientes (nome, unidade_medida, categoria) values
-  ('Blend Smash 150g', 'un', 'Carnes'),
-  ('Pão Brioche', 'un', 'Padaria'),
-  ('Queijo Cheddar', 'kg', 'Laticínios'),
-  ('Bacon Fatiado', 'kg', 'Carnes'),
-  ('Batata Palito', 'kg', 'Congelados'),
-  ('Maionese Artesanal', 'kg', 'Molhos');
+-- Ingredientes (custo_medio = CMP global; estoque_minimo = alerta)
+insert into ingredientes (nome, unidade_medida, categoria, custo_medio, estoque_minimo) values
+  ('Blend Smash 150g', 'un', 'Carnes', 5.42, 12),
+  ('Pão Brioche', 'un', 'Padaria', 1.20, 20),
+  ('Queijo Cheddar', 'kg', 'Laticínios', 38.50, 0.30),
+  ('Bacon Fatiado', 'kg', 'Carnes', 42.00, 1.20),
+  ('Batata Palito', 'kg', 'Congelados', 8.50, 3),
+  ('Maionese Artesanal', 'kg', 'Molhos', 22.00, 0.60);
 
 -- Estoque inicial por unidade (quantidade, custo_medio = CMP, mínimo)
--- Centro (U1)
+-- João Monlevade (U1)
 insert into estoque (unidade_id, ingrediente_id, quantidade, custo_medio, estoque_minimo)
 select u.id, i.id, v.q, v.c, v.m from unidades u
 join (values
@@ -39,7 +43,7 @@ join (values
 join ingredientes i on i.nome = v.nome
 where u.codigo='U1';
 
--- Norte (U2)
+-- Bela Vista (U2)
 insert into estoque (unidade_id, ingrediente_id, quantidade, custo_medio, estoque_minimo)
 select u.id, i.id, v.q, v.c, v.m from unidades u
 join (values
@@ -54,11 +58,11 @@ join ingredientes i on i.nome = v.nome
 where u.codigo='U2';
 
 -- Produtos (fichas técnicas)
-insert into produtos (nome, preco_venda, custo_extra) values
-  ('Smash Clássico', 24.00, 1.40),
-  ('Double Smash Bacon', 32.00, 2.00),
-  ('Crispy Chicken', 26.00, 1.60),
-  ('Combo Smash + Fritas', 42.00, 2.80);
+insert into produtos (nome, preco_venda, custo_fixo, categoria) values
+  ('Smash Clássico', 24.00, 1.50, 'Burguer Simples'),
+  ('Double Smash Bacon', 32.00, 1.50, 'Burguer Duplo'),
+  ('Crispy Chicken', 26.00, 1.50, 'Burguer Simples'),
+  ('Combo Smash + Fritas', 42.00, 1.50, 'Acompanhamentos');
 
 -- Ficha do Smash Clássico
 insert into ficha_itens (produto_id, ingrediente_id, quantidade)

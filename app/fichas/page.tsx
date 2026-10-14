@@ -65,17 +65,23 @@ export default function FichasPage() {
 
   async function carregarDados() {
     setCarregando(true);
-    const [resProd, resIng, resFichas] = await Promise.all([
+    const [resProd, resIng, resFichas, resCusto] = await Promise.all([
       supabase.from('produtos').select('*').order('nome'),
       supabase.from('ingredientes').select('*').order('nome'),
       supabase.from('ficha_itens').select('*'),
+      supabase.from('v_custo_ingrediente').select('ingrediente_id, custo_unitario'),
     ]);
 
+    // Custo efetivo de cada insumo (preparos/molhos usam o custo da receita,
+    // não o CMP de compra, que para eles é zero). Mesma conta do CMV.
+    const custoDe = new Map((resCusto.data || []).map((c) => [c.ingrediente_id, Number(c.custo_unitario)]));
+    const ings: Ingrediente[] = (resIng.data || []).map((i) => ({ ...i, custo_medio: custoDe.get(i.id) ?? i.custo_medio }));
+
     if (resProd.data) setProdutos(resProd.data);
-    if (resIng.data) setIngredientes(resIng.data);
+    if (resIng.data) setIngredientes(ings);
     if (resFichas.data && resIng.data) {
       setFichas(resFichas.data.map((item) => ({
-        ...item, ingredientes: resIng.data.find((ing) => ing.id === item.ingrediente_id),
+        ...item, ingredientes: ings.find((ing) => ing.id === item.ingrediente_id),
       })));
     }
     setCarregando(false);
@@ -115,7 +121,8 @@ export default function FichasPage() {
 
   async function handleRemoverIngrediente(idItem: string) {
     if (!confirm('Remover ingrediente da ficha?')) return;
-    await supabase.from('ficha_itens').delete().eq('id', idItem);
+    const { error } = await supabase.from('ficha_itens').delete().eq('id', idItem);
+    if (error) alert('Erro ao remover: ' + error.message);
     carregarDados();
   }
 
