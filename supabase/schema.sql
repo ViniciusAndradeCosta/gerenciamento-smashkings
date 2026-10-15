@@ -19,6 +19,9 @@ create table if not exists unidades (
   ativo     boolean default true,
   criado_em timestamptz default now()
 );
+-- Garante as colunas usadas pelo app mesmo em tabelas alteradas à mão
+alter table unidades add column if not exists cor text default '#e63946';
+alter table unidades add column if not exists ativo boolean default true;
 
 -- 2. PERFIS (liga auth.users a unidade e papel)
 --    papel: 'admin'    → vê e edita todas as unidades
@@ -70,6 +73,7 @@ create table if not exists ingredientes (
   unidade_medida text not null default 'un',
   categoria text, ativo boolean default true, criado_em timestamptz default now()
 );
+alter table ingredientes add column if not exists ativo boolean default true;
 alter table ingredientes add column if not exists custo_medio numeric(14,4) not null default 0;   -- CMP global (trigger de compras)
 alter table ingredientes add column if not exists estoque_minimo numeric(14,3) not null default 0;
 alter table ingredientes add column if not exists e_produzido_internamente boolean not null default false;
@@ -87,6 +91,9 @@ create table if not exists estoque (
   atualizado_em timestamptz default now(),
   unique (unidade_id, ingrediente_id)
 );
+alter table estoque add column if not exists custo_medio numeric(14,4) not null default 0;
+alter table estoque add column if not exists estoque_minimo numeric(14,3) not null default 0;
+alter table estoque add column if not exists atualizado_em timestamptz default now();
 
 -- 6. COMPRAS (recalcula CMP e soma ao estoque)
 create table if not exists compras (
@@ -101,8 +108,10 @@ create table if not exists compras (
   origem text default 'manual',
   criado_em timestamptz default now()
 );
+alter table compras add column if not exists origem text default 'manual';
 -- "Hoje" no fuso da operação: o banco roda em UTC e, depois das 21h,
 -- current_date já seria o dia seguinte.
+alter table compras add column if not exists data_compra date not null default current_date;
 alter table compras alter column data_compra set default ((now() at time zone 'America/Sao_Paulo')::date);
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'compras_valores_validos') then
@@ -131,15 +140,17 @@ begin
          else new.preco_unitario end
   where id = new.ingrediente_id;
 
-  insert into estoque (unidade_id, ingrediente_id, quantidade, custo_medio)
-  values (new.unidade_id, new.ingrediente_id, new.quantidade, new.preco_unitario)
-  on conflict (unidade_id, ingrediente_id) do update set
-    quantidade = estoque.quantidade + excluded.quantidade,
-    custo_medio = case when estoque.quantidade > 0 and estoque.custo_medio > 0
-                       then (estoque.quantidade * estoque.custo_medio + excluded.quantidade * excluded.custo_medio)
-                            / (estoque.quantidade + excluded.quantidade)
-                       else excluded.custo_medio end,
-    atualizado_em = now();
+  update estoque set
+    quantidade = quantidade + new.quantidade,
+    custo_medio = case when quantidade > 0 and custo_medio > 0
+                       then (quantidade * custo_medio + new.quantidade * new.preco_unitario) / (quantidade + new.quantidade)
+                       else new.preco_unitario end,
+    atualizado_em = now()
+  where unidade_id = new.unidade_id and ingrediente_id = new.ingrediente_id;
+  if not found then
+    insert into estoque (unidade_id, ingrediente_id, quantidade, custo_medio)
+    values (new.unidade_id, new.ingrediente_id, new.quantidade, new.preco_unitario);
+  end if;
   return new;
 end; $$;
 drop trigger if exists trg_aplicar_compra on compras;
@@ -151,14 +162,28 @@ create table if not exists produtos (
   id uuid primary key default uuid_generate_v4(),
   nome text not null,
   preco_venda numeric(14,2) not null default 0,
-  custo_extra numeric(14,2) not null default 0,   -- legado; o app usa custo_fixo
+  custo_fixo numeric(14,2),
   ativo boolean default true, criado_em timestamptz default now()
 );
+alter table produtos add column if not exists ativo boolean default true;
 alter table produtos add column if not exists custo_fixo numeric(14,2);
 alter table produtos add column if not exists categoria text;
 alter table produtos add column if not exists id_consumer text;  -- código no PDV Consumer
 alter table produtos add column if not exists id_goomer text;    -- código no Goomer
 alter table produtos add column if not exists id_ifood text;     -- código no iFood
+
+-- O custo fixo já teve outros nomes (custo_extra, custo_salao). Se o banco
+-- ainda tiver essas colunas, copia o valor para custo_fixo, que é o que o app usa.
+do $$ declare r record; begin
+  for r in
+    select table_name, column_name from information_schema.columns
+    where table_schema = 'public' and table_name in ('produtos', 'ingredientes')
+      and column_name in ('custo_extra', 'custo_salao')
+  loop
+    execute format('update public.%I set custo_fixo = %I where custo_fixo is null and %I is not null',
+                   r.table_name, r.column_name, r.column_name);
+  end loop;
+end $$;
 
 create table if not exists ficha_itens (
   id uuid primary key default uuid_generate_v4(),
@@ -195,6 +220,7 @@ create table if not exists vendas (
   data_venda date not null default current_date,
   criado_em timestamptz default now()
 );
+alter table vendas add column if not exists data_venda date not null default current_date;
 alter table vendas alter column data_venda set default ((now() at time zone 'America/Sao_Paulo')::date);
 
 -- Índices das consultas mais comuns (dashboard, CMV, fichas)
@@ -250,7 +276,7 @@ select p.id as produto_id, p.nome, p.preco_venda,
   case when p.preco_venda > 0 then round((1 - (c.custo_ingredientes + c.custo_fixo) / p.preco_venda) * 100, 1) else 0 end as margem_percent
 from produtos p
 cross join lateral (
-  select coalesce(p.custo_fixo, p.custo_extra, 0) as custo_fixo,
+  select coalesce(p.custo_fixo, 1.50) as custo_fixo,   -- mesmo padrão da tela de Fichas
     coalesce((select sum(fi.quantidade * ci.custo_unitario)
               from ficha_itens fi join v_custo_ingrediente ci on ci.ingrediente_id = fi.ingrediente_id
               where fi.produto_id = p.id), 0) as custo_ingredientes
