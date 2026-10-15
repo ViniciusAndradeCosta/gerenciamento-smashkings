@@ -25,7 +25,8 @@ export default function ChatAssistente() {
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
   const [entrada, setEntrada] = useState('');
   const [enviando, setEnviando] = useState(false);
-  const [modoLocal, setModoLocal] = useState(false);
+  // por que a última resposta veio do modo local (sem IA), se veio
+  const [motivoLocal, setMotivoLocal] = useState<'sem_chave' | 'ia_indisponivel' | null>(null);
   const fim = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export default function ChatAssistente() {
     setEnviando(false);
 
     if (r.ok) {
-      if (r.modo === 'local') setModoLocal(true);
+      setMotivoLocal(r.modo === 'local' ? r.motivo : null);
       setMensagens((m) => [...m, { autor: 'assistant', texto: r.resposta }]);
     } else {
       setMensagens((m) => [...m, { autor: 'assistant', texto: `⚠️ ${r.erro}` }]);
@@ -77,9 +78,14 @@ export default function ChatAssistente() {
         <div ref={fim} />
       </div>
 
-      {modoLocal && (
+      {motivoLocal === 'sem_chave' && (
         <div className="chat-nota">
           Modo local (sem IA). Para respostas mais livres, configure a <code>GEMINI_API_KEY</code>.
+        </div>
+      )}
+      {motivoLocal === 'ia_indisponivel' && (
+        <div className="chat-nota">
+          A IA do Google está sobrecarregada agora — respondi no modo local. Tente de novo em instantes.
         </div>
       )}
 

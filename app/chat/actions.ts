@@ -4,14 +4,20 @@ import { createClient } from '@/lib/supabase/server';
 import { brl, num, pct } from '@/lib/format';
 import { hoje, ontem, inicioDoMes } from '@/lib/date';
 
+/** Quantidade sem zeros sobrando: 14 un, 0,42 kg. */
+const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
+
 export type Mensagem = { autor: 'user' | 'assistant'; texto: string };
 export type Resposta =
-  | { ok: true; resposta: string; modo: 'ia' | 'local' }
+  | { ok: true; resposta: string; modo: 'ia' }
+  | { ok: true; resposta: string; modo: 'local'; motivo: 'sem_chave' | 'ia_indisponivel' }
   | { ok: false; erro: string };
 
 // gemini-flash-latest sempre aponta pro flash atual do Google — não quebra
 // quando uma versão é aposentada. Pode trocar via GEMINI_MODEL no ambiente.
-const MODELO = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// O flash-lite é a reserva: o Google às vezes devolve 503 ("high demand")
+// no modelo principal.
+const MODELOS = Array.from(new Set([process.env.GEMINI_MODEL || 'gemini-flash-latest', 'gemini-flash-lite-latest']));
 
 type Resumo = {
   unidades: { nome: string }[];
@@ -25,6 +31,8 @@ type Resumo = {
   valorEstoque: number;
   alertas: { ingrediente: string; quantidade: number; minimo: number; medida: string; status: string; unidade: string }[];
   porUnidade: { nome: string; faturamento: number; estoque: number; alertas: number }[];
+  /** quantidade atual de cada insumo em cada unidade ("quantos pães tem na Bela Vista?") */
+  estoqueItens: { ingrediente: string; medida: string; unidade: string; quantidade: number }[];
 };
 
 /** Junta os números do negócio a partir do Supabase (respeita o RLS do usuário). */
@@ -43,6 +51,7 @@ async function montarResumo(): Promise<Resumo> {
     { data: valorEst },
     { data: alertas },
     { data: compras },
+    { data: estoque },
   ] = await Promise.all([
     supabase.from('unidades').select('nome, id').order('codigo'),
     supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hj),
@@ -52,6 +61,7 @@ async function montarResumo(): Promise<Resumo> {
     supabase.from('v_valor_estoque').select('*'),
     supabase.from('v_alertas_estoque').select('*').neq('status', 'ok'),
     supabase.from('compras').select('total').gte('data_compra', desde),
+    supabase.from('estoque').select('quantidade, ingredientes(nome, unidade_medida, ativo), unidades(nome)').limit(1000),
   ]);
 
   const soma = (arr: any[] | null, campo: string) =>
@@ -94,7 +104,23 @@ async function montarResumo(): Promise<Resumo> {
       estoque: estoqueDe.get(un.id) || 0,
       alertas: (alertas || []).filter((a: any) => a.unidade_id === un.id).length,
     })),
+    estoqueItens: (estoque || [])
+      .filter((e: any) => e.ingredientes && e.unidades && e.ingredientes.ativo !== false)
+      .map((e: any) => ({
+        ingrediente: e.ingredientes.nome,
+        medida: e.ingredientes.unidade_medida,
+        unidade: e.unidades.nome,
+        quantidade: Number(e.quantidade),
+      }))
+      .sort((a: any, b: any) => a.ingrediente.localeCompare(b.ingrediente, 'pt-BR')),
   };
+}
+
+/** Agrupa o estoque por insumo: "Pão Brioche: Bela Vista 14 un; João Monlevade 8 un". */
+function estoquePorInsumo(itens: Resumo['estoqueItens']) {
+  const grupos = new Map<string, Resumo['estoqueItens']>();
+  for (const i of itens) grupos.set(i.ingrediente, [...(grupos.get(i.ingrediente) || []), i]);
+  return grupos;
 }
 
 /** Texto compacto com os dados, usado como referência para o modelo. */
@@ -110,6 +136,10 @@ function resumoTexto(r: Resumo): string {
         `  - ${u.nome}: faturamento ${brl(u.faturamento)} no mês, valor em estoque ${brl(u.estoque)}, ${u.alertas} ${u.alertas === 1 ? 'item' : 'itens'} em alerta`
     )
     .join('\n');
+  const insumos = Array.from(estoquePorInsumo(r.estoqueItens))
+    .slice(0, 300)
+    .map(([nome, itens]) => `  - ${nome}: ${itens.map((i) => `${i.unidade} ${qtd(i.quantidade)} ${i.medida}`).join('; ')}`)
+    .join('\n') || '  (nenhum insumo em estoque)';
 
   return `DADOS ATUAIS DA SMASHKINGS (use apenas estes números):
 - Unidades: ${r.unidades.map((u) => u.nome).join(', ') || '—'}
@@ -122,7 +152,9 @@ function resumoTexto(r: Resumo): string {
 - Itens em alerta de estoque:
 ${alertas}
 - Dados separados de cada unidade (mês):
-${unidades}`;
+${unidades}
+- Estoque por insumo (quantidade atual em cada unidade):
+${insumos}`;
 }
 
 const SISTEMA = `Você é o assistente da SmashKings, uma hamburgueria com duas unidades. Responda em português do Brasil, de forma curta, clara e direta, como um gerente falaria.
@@ -130,11 +162,18 @@ const SISTEMA = `Você é o assistente da SmashKings, uma hamburgueria com duas 
 Regras:
 - Responda SOMENTE com base nos dados fornecidos na mensagem. Nunca invente números.
 - Se a pergunta pedir algo que não está nos dados, diga que ainda não tem essa informação e sugira o que dá pra perguntar (vendas, CMV, estoque, compras, comparativo entre unidades).
-- Valores sempre em reais (R$). Seja objetivo; use no máximo alguns tópicos curtos quando fizer sentido.`;
+- Quando perguntarem quanto tem de um insumo (ex.: "quantos pães"), responda com a QUANTIDADE e a medida da lista "Estoque por insumo", não com o valor em reais.
+- Valores em dinheiro sempre em reais (R$). Seja objetivo; use no máximo alguns tópicos curtos quando fizer sentido.`;
 
-async function chamarGemini(resumo: string, historico: Mensagem[], pergunta: string): Promise<string> {
-  const chave = process.env.GEMINI_API_KEY!;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${chave}`;
+/** Erro do Gemini que pode passar se tentar de novo (sobrecarga, limite, rede). */
+class ErroGemini extends Error {
+  constructor(mensagem: string, public temporario: boolean) {
+    super(mensagem);
+  }
+}
+
+async function chamarGemini(modelo: string, resumo: string, historico: Mensagem[], pergunta: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`;
 
   const contents = [
     ...historico.slice(-8).map((m) => ({
@@ -144,21 +183,28 @@ async function chamarGemini(resumo: string, historico: Mensagem[], pergunta: str
     { role: 'user', parts: [{ text: `${resumo}\n\nPergunta do gerente: ${pergunta}` }] },
   ];
 
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SISTEMA }] },
-      contents,
-      // Modelos "flash" recentes pensam antes de responder; o limite precisa
-      // caber o raciocínio + a resposta, senão a resposta pode vir vazia.
-      generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-    }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      // chave no cabeçalho (não na URL, onde apareceria em logs)
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY! },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SISTEMA }] },
+        contents,
+        // Modelos "flash" recentes pensam antes de responder; o limite precisa
+        // caber o raciocínio + a resposta, senão a resposta pode vir vazia.
+        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (e: any) {
+    throw new ErroGemini(`Gemini (${modelo}) sem resposta: ${e?.message}`, true);
+  }
 
   if (!resp.ok) {
     const detalhe = await resp.text().catch(() => '');
-    throw new Error(`Gemini ${resp.status}: ${detalhe.slice(0, 200)}`);
+    throw new ErroGemini(`Gemini (${modelo}) ${resp.status}: ${detalhe.slice(0, 200)}`, [429, 500, 503].includes(resp.status));
   }
 
   const data = await resp.json();
@@ -166,28 +212,76 @@ async function chamarGemini(resumo: string, historico: Mensagem[], pergunta: str
     .map((p: any) => p?.text || '')
     .join('')
     .trim();
-  if (!texto) throw new Error('O assistente não retornou resposta.');
+  if (!texto) throw new ErroGemini(`Gemini (${modelo}) não retornou texto.`, true);
   return texto;
+}
+
+/** Tenta o modelo principal (2x se for erro passageiro) e depois o reserva. */
+async function chamarGeminiComReserva(resumo: string, historico: Mensagem[], pergunta: string): Promise<string> {
+  let ultimoErro: unknown;
+  for (const modelo of MODELOS) {
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      try {
+        return await chamarGemini(modelo, resumo, historico, pergunta);
+      } catch (e) {
+        ultimoErro = e;
+        console.error('[chat]', e instanceof Error ? e.message : e);
+        if (!(e instanceof ErroGemini && e.temporario)) break;
+        if (tentativa === 1) await new Promise((ok) => setTimeout(ok, 1200));
+      }
+    }
+  }
+  throw ultimoErro;
+}
+
+/** Sem acento e em minúsculas, para comparar texto digitado com os cadastros. */
+const semAcento = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+/** Palavras "de verdade" (3+ letras) já no singular: "pães" e "pão" viram "pao". */
+function palavras(s: string) {
+  return semAcento(s)
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3)
+    .map((w) => (/(oes|aes)$/.test(w) ? w.slice(0, -3) + 'ao' : w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w));
 }
 
 /** Modo local (sem chave): responde as perguntas mais comuns direto dos dados. */
 function respostaLocal(pergunta: string, r: Resumo): string {
-  const p = pergunta
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '');
+  const p = semAcento(pergunta);
   const tem = (...ts: string[]) => ts.some((t) => p.includes(t));
 
   // Detecta se a pergunta cita uma unidade específica (ex.: "estoque da bela vista").
-  const semAcento = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
   const unidadeCitada = r.porUnidade.find((u) => {
-    const palavras = semAcento(u.nome).replace(/unidade\s*/g, '').split(/\s+/).filter((w) => w.length >= 4);
-    return palavras.some((w) => p.includes(w));
+    const nomes = semAcento(u.nome).replace(/unidade\s*/g, '').split(/\s+/).filter((w) => w.length >= 4);
+    return nomes.some((w) => p.includes(w));
   });
 
   if (tem('cmv')) {
     const situacao = r.cmvPct === 0 ? 'ainda sem vendas no mês' : r.cmvPct <= 35 ? 'dentro da meta (28% a 35%)' : 'acima da meta de 35%';
     return `O CMV do mês está em ${pct(r.cmvPct)} — ${situacao}. No mês, ${brl(r.faturamentoMes)} vendidos custaram ${brl(r.custoMes)} em insumos.`;
+  }
+
+  // Pergunta sobre um insumo ("quantos pães tem na bela vista?"): responde a
+  // quantidade. Escolhe o(s) insumo(s) com mais palavras em comum com a pergunta.
+  const termos = new Set(palavras(pergunta));
+  const grupos = estoquePorInsumo(r.estoqueItens);
+  let melhor = 0;
+  let citados: string[] = [];
+  for (const nome of Array.from(grupos.keys())) {
+    const pontos = palavras(nome).filter((w) => termos.has(w)).length;
+    if (pontos > melhor) { melhor = pontos; citados = [nome]; }
+    else if (pontos > 0 && pontos === melhor) citados.push(nome);
+  }
+  if (citados.length && !tem('compra', 'comprei', 'gastei')) {
+    const linhas = citados.slice(0, 6).map((nome) => {
+      const itens = grupos.get(nome)!.filter((i) => !unidadeCitada || i.unidade === unidadeCitada.nome);
+      if (!itens.length) return `• ${nome}: sem estoque registrado na ${unidadeCitada!.nome}`;
+      const medida = itens[0].medida;
+      if (itens.length === 1) return `• ${nome}: ${qtd(itens[0].quantidade)} ${medida} na ${itens[0].unidade}`;
+      const total = itens.reduce((s, i) => s + i.quantidade, 0);
+      return `• ${nome}: ${itens.map((i) => `${i.unidade} ${qtd(i.quantidade)} ${medida}`).join(' · ')} (total ${qtd(total)} ${medida})`;
+    });
+    return `Estoque atual:\n${linhas.join('\n')}`;
   }
   if (tem('acaband', 'alerta', 'falta', 'minimo', 'mínimo', 'estoque baixo', 'repor', 'comprar')) {
     if (!r.alertas.length) return 'Nenhum item está abaixo do estoque mínimo. Tudo certo por aqui. ✅';
@@ -257,13 +351,14 @@ export async function perguntar(pergunta: string, historico: Mensagem[] = []): P
 
   if (process.env.GEMINI_API_KEY) {
     try {
-      const resposta = await chamarGemini(resumoTexto(resumo), historico, texto);
+      const resposta = await chamarGeminiComReserva(resumoTexto(resumo), historico, texto);
       return { ok: true, resposta, modo: 'ia' };
     } catch {
-      // Se a IA falhar (cota, rede), não deixa o usuário na mão: cai no modo local.
-      return { ok: true, resposta: respostaLocal(texto, resumo), modo: 'local' };
+      // Se a IA falhar (sobrecarga, cota, rede), não deixa o usuário na mão:
+      // responde no modo local e avisa que foi uma falha passageira.
+      return { ok: true, resposta: respostaLocal(texto, resumo), modo: 'local', motivo: 'ia_indisponivel' };
     }
   }
 
-  return { ok: true, resposta: respostaLocal(texto, resumo), modo: 'local' };
+  return { ok: true, resposta: respostaLocal(texto, resumo), modo: 'local', motivo: 'sem_chave' };
 }

@@ -6,30 +6,32 @@ import { createClient } from '@/lib/supabase/server';
 // padrão da Vercel.
 export const maxDuration = 60;
 
-// Mesmo modelo do chat; pode trocar via GEMINI_MODEL no ambiente.
-const MODELO = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// Mesmos modelos do chat; o principal pode ser trocado via GEMINI_MODEL. O
+// flash-lite é a reserva para quando o Google responde 503 ("high demand").
+const MODELOS = Array.from(new Set([process.env.GEMINI_MODEL || 'gemini-flash-latest', 'gemini-flash-lite-latest']));
 
 const TIPOS_ACEITOS = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 const TAMANHO_MAX = 4 * 1024 * 1024; // a Vercel recusa corpos acima de ~4,5 MB
 
 // --- SISTEMA DE RETRY (TENTATIVAS) ---
-async function gerarConteudoComRetry(model: any, prompt: string, imagePart: any, tentativas = 3) {
-  for (let i = 0; i < tentativas; i++) {
-    try {
-      const result = await model.generateContent([prompt, imagePart]);
-      return result;
-    } catch (error: any) {
-      if (i === tentativas - 1) throw error;
-
-      // Se der o erro 503 antigo (High Demand), espera 2 segundos e tenta de novo
-      if (error.message?.includes('503') || error.message?.includes('high demand') || error.message?.includes('overloaded')) {
-        console.log(`[Tentativa ${i + 1}/${tentativas}] Gemini ocupado. Aguardando 2 segundos...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        throw error;
+// Em cada modelo: tenta 2x se o Gemini estiver ocupado; depois passa para o reserva.
+async function gerarConteudoComRetry(genAI: GoogleGenerativeAI, prompt: string, imagePart: any) {
+  let ultimoErro: any;
+  for (const nome of MODELOS) {
+    const model = genAI.getGenerativeModel({ model: nome });
+    for (let i = 1; i <= 2; i++) {
+      try {
+        return await model.generateContent([prompt, imagePart]);
+      } catch (error: any) {
+        ultimoErro = error;
+        const ocupado = /503|429|500|high demand|overloaded|unavailable/i.test(error.message || '');
+        console.log(`[${nome} tentativa ${i}/2] ${ocupado ? 'Gemini ocupado' : 'erro'}: ${error.message?.slice(0, 150)}`);
+        if (!ocupado) break;
+        if (i === 1) await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   }
+  throw ultimoErro;
 }
 
 export async function POST(req: Request) {
@@ -70,7 +72,6 @@ export async function POST(req: Request) {
     };
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: MODELO });
 
     // Monta a regra incluindo a blindagem de marcas e pesos
     const prompt = `
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     `;
 
     // Chama a IA protegida pelo sistema de tentativas
-    const result = await gerarConteudoComRetry(model, prompt, imagePart);
+    const result = await gerarConteudoComRetry(genAI, prompt, imagePart);
     const textoResult: string = result.response.text();
 
     // Faxina caso a IA desobedeça e mande texto/markdown em volta do JSON
