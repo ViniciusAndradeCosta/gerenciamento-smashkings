@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Image from 'next/image';
 import ChatAssistente from './ChatAssistente';
 
 /**
@@ -49,9 +50,12 @@ export default function ChatWidget() {
           ) : semFoto ? (
             '🍔'
           ) : (
-            <img
+            // a foto original tem 2 MB; o next/image entrega uma versão de poucos KB
+            <Image
               src="/king.png"
               alt="King"
+              width={60}
+              height={60}
               className="chat-fab-img"
               onError={() => setSemFoto(true)}
             />

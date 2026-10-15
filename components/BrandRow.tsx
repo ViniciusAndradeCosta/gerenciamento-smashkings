@@ -1,6 +1,5 @@
 'use client';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { IcoSair } from './Icons';
 
@@ -9,11 +8,9 @@ import { IcoSair } from './Icons';
  * (ficam no menu lateral) — sobra só o subtítulo/saudação.
  */
 export default function BrandRow({ sub }: { sub: string }) {
-  const router = useRouter();
   async function sair() {
     await createClient().auth.signOut();
-    router.push('/login');
-    router.refresh();
+    window.location.replace('/login');
   }
   return (
     <div className="brand">

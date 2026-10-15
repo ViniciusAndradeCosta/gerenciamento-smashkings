@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Sheet from './Sheet';
 import {
@@ -50,7 +50,6 @@ const noMais: Item[] = [
 
 export default function AppNav() {
   const path = usePathname();
-  const router = useRouter();
   const [mais, setMais] = useState(false);
   const ativo = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
   const maisAtivo = noMais.some((i) => ativo(i.href)) && !path.startsWith('/compras');
@@ -60,8 +59,7 @@ export default function AppNav() {
 
   async function sair() {
     await createClient().auth.signOut();
-    router.push('/login');
-    router.refresh();
+    window.location.replace('/login');
   }
 
   return (

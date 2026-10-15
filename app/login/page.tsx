@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { IcoEstoque, IcoCmv, IcoNota } from '@/components/Icons';
 
@@ -20,7 +19,6 @@ function Coroa({ className }: { className: string }) {
  * (Authentication → Users → Add user), não por esta tela.
  */
 export default function Login() {
-  const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
@@ -30,19 +28,22 @@ export default function Login() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (carregando) return; // ignora cliques repetidos
     setErro(''); setCarregando(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
       if (error) throw error;
-      router.push('/');
-      router.refresh();
+      // Navegação completa para o Início, e o botão continua em "Entrando…"
+      // até a tela trocar. Antes ele voltava ao normal enquanto o Início
+      // carregava (parecia que o clique falhou) e um refresh da tela de login
+      // brigava com a navegação.
+      window.location.replace('/');
     } catch (err: any) {
       setErro(
         err?.message === 'Invalid login credentials'
           ? 'E-mail ou senha incorretos.'
           : err?.message || 'Erro ao entrar.'
       );
-    } finally {
       setCarregando(false);
     }
   }
@@ -106,7 +107,7 @@ export default function Login() {
               </div>
             </div>
             <button className="btn prim" disabled={carregando}>
-              {carregando ? 'Aguarde…' : 'Entrar'}
+              {carregando ? 'Entrando…' : 'Entrar'}
             </button>
           </form>
 

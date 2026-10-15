@@ -16,10 +16,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   // Conta criada mas ainda não liberada por um admin: o RLS não deixa ver
   // nada, então em vez de um painel zerado mostramos o aviso.
+  // perfil e unidades em paralelo: uma ida ao banco a menos por abertura
   const { data: { user } } = await supabase.auth.getUser();
-  const { data: perfil } = user
-    ? await supabase.from('perfis').select('papel').eq('id', user.id).maybeSingle()
-    : { data: null };
+  const [{ data: perfil }, { data: unidades }] = await Promise.all([
+    user ? supabase.from('perfis').select('papel').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null }),
+    supabase.from('unidades').select('*').order('codigo'),
+  ]);
   if (perfil?.papel !== 'admin' && perfil?.papel !== 'gerente') {
     return (
       <>
@@ -38,7 +40,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     );
   }
 
-  const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
   const alvo = (unidades || []).find((x) => x.codigo === u);
 
   const hj = hoje();
