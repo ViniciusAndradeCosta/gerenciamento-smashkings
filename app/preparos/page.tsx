@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import TopBar from '@/components/TopBar';
+import { useState, useEffect, useMemo } from 'react';
+import PageHeader from '@/components/PageHeader';
+import Sheet from '@/components/Sheet';
+import { avisar } from '@/components/Toaster';
+import { IcoBusca, IcoLixo, IcoMais, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
-import { brl, num } from '@/lib/format';
+import { brl } from '@/lib/format';
 
 type Ingrediente = {
   id: string;
@@ -15,417 +18,323 @@ type Ingrediente = {
   e_produzido_internamente?: boolean;
   rendimento_receita?: number;
 };
+type ItemPreparo = { id: string; insumo_pai_id: string; ingrediente_id: string; quantidade: number; ingredientes?: Ingrediente };
 
-type ItemPreparo = {
-  id: string;
-  insumo_pai_id: string;
-  ingrediente_id: string;
-  quantidade: number;
-  ingredientes?: Ingrediente;
-};
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
+const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 
 export default function PreparosPage() {
   const supabase = createClient();
-
   const [preparos, setPreparos] = useState<Ingrediente[]>([]);
-  const [ingredientesBrutos, setIngredientesBrutos] = useState<Ingrediente[]>([]);
-  const [itensPreparo, setItensPreparo] = useState<ItemPreparo[]>([]);
+  const [brutos, setBrutos] = useState<Ingrediente[]>([]);
+  const [itens, setItens] = useState<ItemPreparo[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [busca, setBusca] = useState('');
 
-  // Estados do Modal
-  const [preparoModal, setPreparoModal] = useState<Ingrediente | null>(null);
-  const [ingredienteBusca, setIngredienteBusca] = useState(''); // Estado alterado para busca por texto
-  const [quantidadeInput, setQuantidadeInput] = useState('');
-  const [rendimentoInput, setRendimentoInput] = useState('');
-  const [salvandoItem, setSalvandoItem] = useState(false);
-
-  // Estados de Edição Inline
-  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
-  const [editQtd, setEditQtd] = useState('');
-
-  // Cadastro de novo preparo
+  // novo preparo
+  const [novoAberto, setNovoAberto] = useState(false);
   const [novoNome, setNovoNome] = useState('');
   const [novaMedida, setNovaMedida] = useState('kg');
   const [novoRendimento, setNovoRendimento] = useState('');
   const [criando, setCriando] = useState(false);
 
-  async function handleCriarPreparo(e: React.FormEvent) {
+  // receita aberta
+  const [aberto, setAberto] = useState<Ingrediente | null>(null);
+  const [rendimento, setRendimento] = useState('');
+  const [novoInsumo, setNovoInsumo] = useState('');
+  const [novaQtd, setNovaQtd] = useState('');
+  const [qtds, setQtds] = useState<Record<string, string>>({});
+  const [salvandoItem, setSalvandoItem] = useState(false);
+
+  async function carregarDados() {
+    const [resIng, resItens] = await Promise.all([
+      supabase.from('ingredientes').select('*').order('nome'),
+      supabase.from('preparo_itens').select('*'),
+    ]);
+    const todos = resIng.data || [];
+    setPreparos(todos.filter((i) => i.e_produzido_internamente));
+    setBrutos(todos.filter((i) => !i.e_produzido_internamente));
+    if (resItens.data) {
+      const lista = resItens.data.map((item) => ({ ...item, ingredientes: todos.find((ing) => ing.id === item.ingrediente_id) }));
+      setItens(lista);
+      setQtds(Object.fromEntries(lista.map((i) => [i.id, qtd(Number(i.quantidade)).replace(/\./g, '')])));
+    }
+    // mantém a janela aberta com os dados novos
+    setAberto((a) => (a ? todos.find((i) => i.id === a.id) || null : null));
+    setCarregando(false);
+  }
+
+  useEffect(() => { carregarDados(); }, []);
+
+  // mesma conta da view v_custo_ingrediente: (insumos + custo fixo) / rendimento
+  const custos = useMemo(() => {
+    const m = new Map<string, { insumos: number; fixo: number; lote: number; porUnidade: number; rendimento: number; itens: number }>();
+    for (const p of preparos) {
+      const comp = itens.filter((i) => i.insumo_pai_id === p.id);
+      const insumos = comp.reduce((s, i) => s + Number(i.quantidade) * Number(i.ingredientes?.custo_medio || 0), 0);
+      const fixo = Number(p.custo_fixo ?? p.custo_salao ?? 1.5);
+      const rend = Number(p.rendimento_receita || 1);
+      const lote = insumos + fixo;
+      m.set(p.id, { insumos, fixo, lote, porUnidade: rend > 0 ? lote / rend : 0, rendimento: rend, itens: comp.length });
+    }
+    return m;
+  }, [preparos, itens]);
+
+  const lista = preparos.filter((p) => !busca.trim() || p.nome.toLowerCase().includes(busca.trim().toLowerCase()));
+
+  async function criarPreparo(e: React.FormEvent) {
     e.preventDefault();
     const nome = novoNome.trim();
-    const rendimento = Number(novoRendimento.replace(',', '.'));
-    if (!nome || isNaN(rendimento) || rendimento <= 0) {
-      alert('Informe o nome e um rendimento maior que zero.');
-      return;
-    }
-    if ([...preparos, ...ingredientesBrutos].some((i) => i.nome.toLowerCase().trim() === nome.toLowerCase())) {
-      alert('Já existe um insumo com esse nome.');
-      return;
+    const rend = paraNumero(novoRendimento);
+    if (!nome || !(rend > 0)) return avisar('Informe o nome e um rendimento maior que zero.', 'erro');
+    if ([...preparos, ...brutos].some((i) => i.nome.toLowerCase().trim() === nome.toLowerCase())) {
+      return avisar('Já existe um insumo com esse nome.', 'erro');
     }
 
     setCriando(true);
     const { data: config } = await supabase.from('configuracoes_loja').select('custo_fixo_padrao').limit(1).maybeSingle();
-    const { error } = await supabase.from('ingredientes').insert({
+    const { data, error } = await supabase.from('ingredientes').insert({
       nome,
       unidade_medida: novaMedida,
       e_produzido_internamente: true,
-      rendimento_receita: rendimento,
+      rendimento_receita: rend,
       custo_fixo: config?.custo_fixo_padrao ?? 1.5,
       ativo: true,
-    });
+    }).select().single();
     setCriando(false);
 
-    if (error) {
-      alert('Erro ao criar preparo: ' + error.message);
-    } else {
-      setNovoNome('');
-      setNovoRendimento('');
-      await carregarDados();
-    }
+    if (error) return avisar('Erro ao criar preparo: ' + error.message, 'erro');
+    avisar(`${nome} criado. Agora monte a receita.`);
+    setNovoAberto(false);
+    setNovoNome('');
+    setNovoRendimento('');
+    await carregarDados();
+    if (data) abrirReceita(data);
   }
 
-  async function carregarDados() {
-    setCarregando(true);
-    const [resIng, resPreparoItens] = await Promise.all([
-      supabase.from('ingredientes').select('*').order('nome'),
-      supabase.from('preparo_itens').select('*'),
-    ]);
-
-    if (resIng.data) {
-      const todosIngredientes = resIng.data;
-      setPreparos(todosIngredientes.filter((i) => i.e_produzido_internamente));
-      setIngredientesBrutos(todosIngredientes.filter((i) => !i.e_produzido_internamente));
-
-      if (resPreparoItens.data) {
-        const itensCompletos = resPreparoItens.data.map((item) => ({
-          ...item,
-          ingredientes: todosIngredientes.find((ing) => ing.id === item.ingrediente_id),
-        }));
-        setItensPreparo(itensCompletos);
-      }
-    }
-    setCarregando(false);
+  function abrirReceita(p: Ingrediente) {
+    setRendimento(qtd(Number(p.rendimento_receita || 1)).replace(/\./g, ''));
+    setNovoInsumo('');
+    setNovaQtd('');
+    setAberto(p);
   }
 
-  useEffect(() => {
+  async function salvarRendimento() {
+    if (!aberto) return;
+    const valor = paraNumero(rendimento);
+    if (valor === Number(aberto.rendimento_receita || 1)) return;
+    if (!(valor > 0)) return avisar('Rendimento inválido.', 'erro');
+    const { error } = await supabase.from('ingredientes').update({ rendimento_receita: valor }).eq('id', aberto.id);
+    if (error) return avisar('Erro ao atualizar: ' + error.message, 'erro');
+    avisar('Rendimento atualizado.');
     carregarDados();
-  }, []);
+  }
 
-  async function handleAdicionarIngrediente(e: React.FormEvent) {
+  async function adicionarInsumo(e: React.FormEvent) {
     e.preventDefault();
-    if (!preparoModal || !ingredienteBusca || !quantidadeInput) return;
-
-    // Busca o ID do ingrediente com base no nome digitado
-    const ingEncontrado = ingredientesBrutos.find(i => i.nome.toLowerCase() === ingredienteBusca.toLowerCase());
-    
-    if (!ingEncontrado) {
-      alert('Por favor, selecione um ingrediente válido da lista.');
-      return;
-    }
+    if (!aberto) return;
+    const ing = brutos.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+    if (!ing) return avisar('Escolha um insumo da lista.', 'erro');
+    const quantidade = paraNumero(novaQtd);
+    if (!(quantidade > 0)) return avisar('Informe a quantidade usada no lote.', 'erro');
 
     setSalvandoItem(true);
-    const qtdNum = Number(quantidadeInput.replace(',', '.'));
-
-    const { error } = await supabase.from('preparo_itens').insert({
-      insumo_pai_id: preparoModal.id,
-      ingrediente_id: ingEncontrado.id,
-      quantidade: qtdNum,
-    });
-
-    if (error) {
-      alert('Erro ao adicionar ingrediente: ' + error.message);
-    } else {
-      setIngredienteBusca('');
-      setQuantidadeInput('');
-      await carregarDados();
-    }
+    const { error } = await supabase.from('preparo_itens').insert({ insumo_pai_id: aberto.id, ingrediente_id: ing.id, quantidade });
     setSalvandoItem(false);
+    if (error) return avisar('Erro ao adicionar: ' + error.message, 'erro');
+    setNovoInsumo('');
+    setNovaQtd('');
+    carregarDados();
   }
 
-  async function handleRemoverIngrediente(idItem: string) {
-    if (!confirm('Remover este insumo da receita de preparo?')) return;
-    const { error } = await supabase.from('preparo_itens').delete().eq('id', idItem);
-    if (error) {
-      alert('Erro ao remover: ' + error.message);
-    } else {
-      carregarDados();
+  async function salvarQtd(item: ItemPreparo) {
+    const valor = paraNumero(qtds[item.id] || '');
+    if (valor === Number(item.quantidade)) return;
+    if (!(valor > 0)) {
+      avisar('Quantidade inválida.', 'erro');
+      return setQtds({ ...qtds, [item.id]: qtd(Number(item.quantidade)) });
     }
+    const { error } = await supabase.from('preparo_itens').update({ quantidade: valor }).eq('id', item.id);
+    if (error) return avisar('Erro ao editar: ' + error.message, 'erro');
+    avisar('Quantidade atualizada.');
+    carregarDados();
   }
 
-  async function handleAtualizarRendimento() {
-    if (!preparoModal || !rendimentoInput) return;
-    const rendNum = Number(rendimentoInput.replace(',', '.'));
-
-    const { error } = await supabase
-      .from('ingredientes')
-      .update({ rendimento_receita: rendNum })
-      .eq('id', preparoModal.id);
-
-    if (error) {
-      alert('Erro ao atualizar: ' + error.message);
-    } else {
-      alert('Rendimento do lote atualizado com sucesso!');
-      await carregarDados();
-      setPreparoModal({ ...preparoModal, rendimento_receita: rendNum });
-    }
+  async function removerItem(item: ItemPreparo) {
+    if (!confirm(`Remover ${item.ingredientes?.nome || 'este insumo'} da receita?`)) return;
+    const { error } = await supabase.from('preparo_itens').delete().eq('id', item.id);
+    if (error) return avisar('Erro ao remover: ' + error.message, 'erro');
+    carregarDados();
   }
 
-  async function handleSalvarEdicao(idItem: string) {
-    const qtdNum = Number(editQtd.replace(',', '.'));
-    if (isNaN(qtdNum) || qtdNum <= 0) {
-      alert('Quantidade inválida.');
-      return;
-    }
-    
-    const { error } = await supabase.from('preparo_itens').update({ quantidade: qtdNum }).eq('id', idItem);
-    
-    if (error) {
-      alert('Erro ao editar: ' + error.message);
-    } else {
-      setEditandoItemId(null);
-      await carregarDados();
-    }
-  }
-
-  function iniciarEdicao(item: ItemPreparo) {
-    setEditandoItemId(item.id);
-    setEditQtd(String(item.quantidade).replace('.', ','));
-  }
+  const c = aberto ? custos.get(aberto.id) : undefined;
+  const comp = aberto ? itens.filter((i) => i.insumo_pai_id === aberto.id).sort((a, b) => (a.ingredientes?.nome || '').localeCompare(b.ingredientes?.nome || '', 'pt-BR')) : [];
 
   return (
     <>
-      <TopBar titulo="Preparo de Molhos e Sub-receitas" />
-
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
-
-        .tabela-fichas { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 650px; }
-        .tabela-fichas th { padding: 16px 12px; font-weight: 500; color: var(--dim); border-bottom: 1px solid var(--line); }
-        .tabela-fichas td { padding: 16px 12px; border-bottom: 1px solid var(--line); }
-        .btn-ficha { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block; white-space: nowrap; }
-
-        /* Estilos Inteligentes do Modal (Responsivo) */
-        .modal-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        .modal-table th { padding: 12px; color: var(--dim); border-bottom: 1px solid var(--line); font-weight: normal; }
-        .modal-table td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--txt); vertical-align: middle; }
-        .modal-input { background: var(--bg); border: 1px solid var(--gold); color: var(--txt); border-radius: 4px; outline: none; padding: 6px; width: 100%; box-sizing: border-box; text-align: center; }
-        .btn-sm { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; }
-        .btn-sm.gold { background: var(--gold); color: #000; }
-        .btn-sm.surf { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
-        .btn-sm.red { background: var(--rdim); color: var(--red); }
-        
-        .qtd-wrap { display: flex; gap: 4px; align-items: center; }
-        .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
-
-        @media (max-width: 768px) {
-          .tabela-fichas { font-size: 12px; }
-          .tabela-fichas th, .tabela-fichas td { padding: 12px 6px; font-size: 11px; }
-          .hide-mobile { display: none; }
-          
-          .modal-table { font-size: 11px; }
-          .modal-table th, .modal-table td { padding: 8px 4px; }
-          .modal-input { padding: 6px 2px; font-size: 11px; }
-          .btn-sm { padding: 6px 4px; font-size: 10px; flex: 1; text-align: center; }
-          .qtd-wrap { flex-direction: column; align-items: stretch; gap: 2px; }
-          .action-cell { flex-direction: column; align-items: stretch; gap: 4px; }
+      <PageHeader
+        titulo="Preparos"
+        subtitulo="Molhos e sub-receitas feitos na casa"
+        acoes={
+          <button className="bt bt-prim bt-ic-mob" onClick={() => setNovoAberto(true)} aria-label="Novo preparo">
+            <IcoMais size={17} /><span>Novo preparo</span>
+          </button>
         }
-      `}} />
+      />
 
-      <div className="wrap">
-        <div className="lbl">Novo Preparo</div>
-        <div className="panel" style={{ padding: '16px', marginBottom: '8px' }}>
-          <form onSubmit={handleCriarPreparo} style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div style={{ flex: '2 1 200px' }}>
-              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Nome (ex: Molho da Casa)</label>
-              <input type="text" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} required style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
+      <div className="pg">
+        {preparos.length > 0 && (
+          <div className="filtros">
+            <label className="busca">
+              <IcoBusca size={17} />
+              <input className="inp" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar preparo…" aria-label="Buscar preparo" />
+            </label>
+          </div>
+        )}
+
+        <div className="lista">
+          {carregando ? (
+            <div className="vazio">Carregando receitas…</div>
+          ) : preparos.length === 0 ? (
+            <div className="vazio">
+              Nenhum preparo cadastrado.<br />Toque em <b style={{ color: 'var(--gold)' }}>Novo preparo</b> para criar um molho ou sub-receita.
             </div>
-            <div style={{ flex: '1 1 90px' }}>
-              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Medida</label>
-              <select value={novaMedida} onChange={(e) => setNovaMedida(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}>
+          ) : lista.length === 0 ? (
+            <div className="vazio">Nada encontrado para &quot;{busca}&quot;.</div>
+          ) : (
+            lista.map((p) => {
+              const cp = custos.get(p.id)!;
+              return (
+                <button key={p.id} className="item" onClick={() => abrirReceita(p)}>
+                  <div className="item-main">
+                    <div className="item-tit">
+                      {p.nome}
+                      {cp.itens === 0 && <span className="tag o">Montar receita</span>}
+                    </div>
+                    <div className="item-sub">
+                      Lote rende {qtd(cp.rendimento)} {p.unidade_medida} · custa {brl(cp.lote)}
+                    </div>
+                  </div>
+                  <div className="item-dir">
+                    <div className="item-val">{brl(cp.porUnidade)}</div>
+                    <div className="item-mini">por {p.unidade_medida}</div>
+                  </div>
+                  <IcoSeta size={16} className="item-chev" />
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* ---------- novo preparo ---------- */}
+      <Sheet
+        aberto={novoAberto}
+        titulo="Novo preparo"
+        subtitulo="Depois você monta a receita"
+        onFechar={() => setNovoAberto(false)}
+        rodape={
+          <>
+            <button type="button" className="bt bt-sec" onClick={() => setNovoAberto(false)}>Cancelar</button>
+            <button type="submit" form="form-preparo" className="bt bt-prim" disabled={criando}>{criando ? 'Criando…' : 'Criar e montar receita'}</button>
+          </>
+        }
+      >
+        <form id="form-preparo" onSubmit={criarPreparo}>
+          <div className="field">
+            <label htmlFor="pr-nome">Nome</label>
+            <input id="pr-nome" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} placeholder="Ex: Molho da Casa" required />
+          </div>
+          <div className="field2">
+            <div className="field">
+              <label htmlFor="pr-medida">Medida</label>
+              <select id="pr-medida" value={novaMedida} onChange={(e) => setNovaMedida(e.target.value)}>
                 {['kg', 'g', 'L', 'ml', 'un'].map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <div style={{ flex: '1 1 120px' }}>
-              <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Rendimento do lote</label>
-              <input type="text" inputMode="decimal" value={novoRendimento} onChange={(e) => setNovoRendimento(e.target.value)} placeholder="Ex: 2,5" required style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
+            <div className="field">
+              <label htmlFor="pr-rend">Rendimento do lote</label>
+              <div className="inp-un">
+                <input id="pr-rend" inputMode="decimal" value={novoRendimento} onChange={(e) => setNovoRendimento(e.target.value)} placeholder="Ex: 2,5" required />
+                <span>{novaMedida}</span>
+              </div>
             </div>
-            <button type="submit" disabled={criando} style={{ padding: '12px 16px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-              {criando ? 'Criando...' : '+ Criar'}
-            </button>
-          </form>
-        </div>
-
-        <div className="lbl">Controle de Insumos Produzidos Internamente</div>
-
-        {carregando ? (
-          <div className="panel" style={{ padding: '24px', textAlign: 'center' }}>Carregando o caderno de receitas...</div>
-        ) : (
-          <div className="panel custom-scroll" style={{ overflowX: 'auto', padding: 0 }}>
-            <table className="tabela-fichas">
-              <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <th style={{ paddingLeft: '20px' }}>Insumo (Receita)</th>
-                  <th>Rend. Lote</th>
-                  <th>Custo do Lote</th>
-                  <th>Custo Base (1{preparos[0]?.unidade_medida || 'g'})</th>
-                  <th style={{ paddingRight: '20px', textAlign: 'right' }}>Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preparos.length === 0 && (
-                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--dim)' }}>Nenhum preparo cadastrado. Crie o primeiro acima e depois monte a receita.</td></tr>
-                )}
-                {preparos.map((prep) => {
-                  const composicao = itensPreparo.filter((item) => item.insumo_pai_id === prep.id);
-                  const temReceita = composicao.length > 0;
-
-                  const custoMateriaPrima = composicao.reduce((acc, item) => {
-                    const cMedio = Number(item.ingredientes?.custo_medio || 0);
-                    return acc + Number(item.quantidade) * cMedio;
-                  }, 0);
-
-                  const custoFixo = Number(prep.custo_fixo ?? prep.custo_salao ?? 1.50);
-                  const custoLoteTotal = custoMateriaPrima + custoFixo;
-
-                  const rendimento = Number(prep.rendimento_receita || 1);
-                  const custoCalculadoPorUnidade = rendimento > 0 ? custoLoteTotal / rendimento : 0;
-
-                  return (
-                    <tr
-                      key={prep.id}
-                      onClick={() => { setPreparoModal(prep); setRendimentoInput(String(prep.rendimento_receita || 1)); }}
-                      style={{ cursor: 'pointer', transition: 'background 0.2s', borderLeft: temReceita ? '4px solid var(--grn)' : '4px solid var(--gold)' }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surf)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <td style={{ paddingLeft: '20px', color: 'var(--txt)' }}><b style={{ fontSize: 15, display: 'block' }}>{prep.nome}</b></td>
-                      <td style={{ color: 'var(--txt)' }}>{num(rendimento, 2)} {prep.unidade_medida}</td>
-                      <td style={{ color: 'var(--gold)', fontWeight: 'bold' }}>{brl(custoLoteTotal)}</td>
-                      <td style={{ color: 'var(--txt)', fontWeight: 'bold' }}>{brl(custoCalculadoPorUnidade)} <span style={{fontSize: 11, color: 'var(--dim)', fontWeight: 'normal'}}>/ {prep.unidade_medida}</span></td>
-                      <td style={{ paddingRight: '20px', textAlign: 'right' }}>
-                        {temReceita ? <span className="btn-ficha" style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'var(--grn)' }}>Ver Receita</span> : <span className="btn-ficha" style={{ background: 'var(--rdim)', color: 'var(--red)' }}>⚠️ Montar</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
-        )}
-      </div>
+          <p className="dica">Rendimento = quanto sai de cada lote preparado. Ele divide o custo do lote.</p>
+        </form>
+      </Sheet>
 
-      {/* MODAL DE EDIÇÃO DA SUB-RECEITA */}
-      {preparoModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="panel custom-scroll" style={{ width: '100%', maxWidth: '700px', padding: '24px', borderRadius: '12px', background: 'var(--bg)', maxHeight: '90vh', overflowY: 'auto' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-              <div>
-                <h3 style={{ margin: 0, color: 'var(--txt)', fontSize: '20px' }}>Ficha de Preparo</h3>
-                <div style={{ color: 'var(--gold)', fontSize: '16px', fontWeight: 'bold', marginTop: '4px' }}>{preparoModal.nome}</div>
-              </div>
-              <button onClick={() => { setPreparoModal(null); setEditandoItemId(null); }} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+      {/* ---------- receita ---------- */}
+      <Sheet aberto={!!aberto} titulo="Receita" subtitulo={aberto?.nome} onFechar={() => setAberto(null)}>
+        {aberto && c && (
+          <>
+            <div className="resumo">
+              <div><span>Custo do lote</span><b>{brl(c.lote)}</b></div>
+              <div><span>Rendimento</span><b>{qtd(c.rendimento)} {aberto.unidade_medida}</b></div>
+              <div><span>Custo por {aberto.unidade_medida}</span><b className="o">{brl(c.porUnidade)}</b></div>
             </div>
 
-            <div style={{ background: 'var(--surf)', padding: '16px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div style={{ flex: '1 1 200px' }}>
-                <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--dim)' }}>Rendimento do Lote ({preparoModal.unidade_medida})</label>
-                <input type="text" value={rendimentoInput} onChange={(e) => setRendimentoInput(e.target.value)} style={{ width: '100%', padding: '10px', background: 'var(--bg)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '6px', outline: 'none' }} />
-              </div>
-              <button onClick={handleAtualizarRendimento} style={{ padding: '10px 16px', background: 'var(--line)', color: 'var(--txt)', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Salvar Rendimento</button>
-            </div>
-
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '12px', fontWeight: 'bold' }}>Ingredientes Utilizados</div>
-              <div style={{ background: 'var(--surf)', borderRadius: '8px', border: '1px solid var(--line)' }}>
-                <table className="modal-table">
-                  <thead>
-                    <tr>
-                      <th>Ingrediente</th>
-                      <th>Qtd Receita</th>
-                      <th className="hide-mobile">Custo UND</th>
-                      <th>Custo Total</th>
-                      <th style={{ textAlign: 'right' }}>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {itensPreparo.filter((i) => i.insumo_pai_id === preparoModal.id).length === 0 ? (
-                      <tr><td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: 'var(--gold)' }}>Nenhuma matéria-prima vinculada.</td></tr>
-                    ) : (
-                      itensPreparo.filter((i) => i.insumo_pai_id === preparoModal.id).map((item) => {
-                        const cUnd = Number(item.ingredientes?.custo_medio || 0);
-                        const isEditing = editandoItemId === item.id;
-
-                        return (
-                          <tr key={item.id} style={{ background: isEditing ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
-                            <td>{item.ingredientes?.nome}</td>
-                            
-                            <td>
-                              {isEditing ? (
-                                <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editQtd} onChange={(e) => setEditQtd(e.target.value)} autoFocus />
-                                  <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{item.ingredientes?.unidade_medida}</span>
-                                </div>
-                              ) : (
-                                <span>{num(item.quantidade, 3)} <span style={{ fontSize: '10px', color: 'var(--dim)' }}>{item.ingredientes?.unidade_medida}</span></span>
-                              )}
-                            </td>
-
-                            <td className="hide-mobile">{brl(cUnd)}</td>
-                            <td style={{ fontWeight: 'bold' }}>{brl(item.quantidade * cUnd)}</td>
-                            
-                            <td>
-                              <div className="action-cell">
-                                {isEditing ? (
-                                  <>
-                                    <button onClick={() => handleSalvarEdicao(item.id)} className="btn-sm gold">Salvar</button>
-                                    <button onClick={() => setEditandoItemId(null)} className="btn-sm surf">✕</button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button onClick={() => iniciarEdicao(item)} className="btn-sm surf">Editar</button>
-                                    <button onClick={() => handleRemoverIngrediente(item.id)} className="btn-sm red">Apagar</button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <form onSubmit={handleAdicionarIngrediente} style={{ borderTop: '1px solid var(--line)', paddingTop: '20px', display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-              <div style={{ flex: 2 }}>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Selecionar Matéria-Prima</label>
-                {/* CAMPO DE BUSCA E SELEÇÃO INTELIGENTE (DATALIST) */}
-                <input 
-                  list="lista-ingredientes-brutos" 
-                  value={ingredienteBusca} 
-                  onChange={(e) => setIngredienteBusca(e.target.value)} 
-                  placeholder="Digite ou selecione..."
-                  style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} 
-                  required 
+            <div className="field">
+              <label htmlFor="rend">Rendimento do lote</label>
+              <div className="inp-un">
+                <input
+                  id="rend" inputMode="decimal" value={rendimento} onChange={(e) => setRendimento(e.target.value)}
+                  onBlur={salvarRendimento} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                 />
+                <span>{aberto.unidade_medida}</span>
+              </div>
+            </div>
+
+            <div className="sheet-sec">Insumos do lote</div>
+            <div className="comp">
+              {comp.length === 0 && <div className="vazio">Nenhum insumo ainda. Adicione abaixo.</div>}
+              {comp.map((item) => {
+                const custoUn = Number(item.ingredientes?.custo_medio || 0);
+                return (
+                  <div className="comp-l" key={item.id}>
+                    <div className="item-main">
+                      <b>{item.ingredientes?.nome || '—'}</b>
+                      <span>{brl(custoUn)} / {item.ingredientes?.unidade_medida}</span>
+                    </div>
+                    <div className="comp-q">
+                      <input
+                        className="inp" inputMode="decimal" aria-label={`Quantidade de ${item.ingredientes?.nome}`}
+                        value={qtds[item.id] ?? ''} onChange={(e) => setQtds({ ...qtds, [item.id]: e.target.value })}
+                        onBlur={() => salvarQtd(item)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                      />
+                    </div>
+                    <div className="comp-c">{brl(Number(item.quantidade) * custoUn)}</div>
+                    <button className="bt bt-ic bt-sm bt-ghost" onClick={() => removerItem(item)} aria-label={`Remover ${item.ingredientes?.nome}`}>
+                      <IcoLixo size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+              <div className="comp-l comp-tot">
+                <div className="item-main"><span>Insumos {brl(c.insumos)} + custo fixo {brl(c.fixo)}</span></div>
+                <div className="comp-c">{brl(c.lote)}</div>
+              </div>
+            </div>
+
+            <div className="sheet-sec">Adicionar insumo</div>
+            <form className="add-linha" onSubmit={adicionarInsumo}>
+              <div className="field">
+                <input list="lista-ingredientes-brutos" value={novoInsumo} onChange={(e) => setNovoInsumo(e.target.value)} placeholder="Insumo" aria-label="Insumo" autoComplete="off" />
                 <datalist id="lista-ingredientes-brutos">
-                  {ingredientesBrutos.map((ing) => (
-                    <option key={ing.id} value={ing.nome} />
-                  ))}
+                  {brutos.map((ing) => <option key={ing.id} value={ing.nome} />)}
                 </datalist>
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Qtd de Uso</label>
-                <input type="text" value={quantidadeInput} onChange={(e) => setQuantidadeInput(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px' }} required />
+              <div className="field">
+                <input inputMode="decimal" value={novaQtd} onChange={(e) => setNovaQtd(e.target.value)} placeholder="Qtd" aria-label="Quantidade" />
               </div>
-              <button type="submit" disabled={salvandoItem} style={{ padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>+</button>
+              <button type="submit" className="bt bt-prim bt-ic" disabled={salvandoItem} aria-label="Adicionar insumo" style={{ height: 48, width: 48 }}>
+                <IcoMais size={20} />
+              </button>
             </form>
-          </div>
-        </div>
-      )}
+            <p className="dica">Quantidade usada em um lote, na medida do insumo.</p>
+          </>
+        )}
+      </Sheet>
     </>
   );
 }

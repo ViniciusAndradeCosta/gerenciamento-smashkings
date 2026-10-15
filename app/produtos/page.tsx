@@ -1,9 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import TopBar from '@/components/TopBar';
+import { useState, useEffect, useMemo } from 'react';
+import PageHeader from '@/components/PageHeader';
+import Sheet from '@/components/Sheet';
+import { avisar } from '@/components/Toaster';
+import { IcoBusca, IcoCustos, IcoMais, IcoSeta, IcoLixo } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl } from '@/lib/format';
+import { CATEGORIAS } from '@/lib/categorias';
 
 type Produto = {
   id: string;
@@ -17,334 +21,328 @@ type Produto = {
   ativo: boolean;
 };
 
-const CATEGORIAS = [
-  'Burguer Simples',
-  'Burguer Duplo',
-  'Burguer Triplo',
-  'Burguer Alto',
-  'Burguer do mês',
-  'Veggies',
-  'Molho Adicional',
-  'Acompanhamentos',
-  'Milkshakes'
-];
+type Form = { nome: string; preco: string; categoria: string; consumer: string; goomer: string; ifood: string };
+const FORM_VAZIO: Form = { nome: '', preco: '', categoria: '', consumer: '', goomer: '', ifood: '' };
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
 
 export default function ProdutosPage() {
   const supabase = createClient();
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [filtro, setFiltro] = useState('Todos');
+  const [busca, setBusca] = useState('');
 
-  // Estado para o Filtro
-  const [filtroCategoria, setFiltroCategoria] = useState('Todos');
+  // janela de cadastro/edição: null = fechada, 'novo' ou o produto em edição
+  const [editando, setEditando] = useState<Produto | 'novo' | null>(null);
+  const [form, setForm] = useState<Form>(FORM_VAZIO);
+  const [salvando, setSalvando] = useState(false);
 
-  // Estado para cadastro de novo produto
-  const [nome, setNome] = useState('');
-  const [precoVenda, setPrecoVenda] = useState('');
-  const [categoria, setCategoria] = useState('');
-  const [idConsumer, setIdConsumer] = useState('');
-  const [idGoomer, setIdGoomer] = useState('');
-  const [idIfood, setIdIfood] = useState('');
-
-  // Estado para modal de edição
-  const [produtoEditando, setProdutoEditando] = useState<Produto | null>(null);
-  const [editNome, setEditNome] = useState('');
-  const [editPrecoVenda, setEditPrecoVenda] = useState('');
-  const [editCategoria, setEditCategoria] = useState('');
-  const [editIdConsumer, setEditIdConsumer] = useState('');
-  const [editIdGoomer, setEditIdGoomer] = useState('');
-  const [editIdIfood, setEditIdIfood] = useState('');
-  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  // janela do custo fixo
+  const [custoAberto, setCustoAberto] = useState(false);
+  const [configId, setConfigId] = useState('');
+  const [custoFixo, setCustoFixo] = useState('');
+  const [salvandoCusto, setSalvandoCusto] = useState(false);
 
   async function carregarProdutos() {
     setCarregando(true);
     const { data, error } = await supabase.from('produtos').select('*').order('nome');
-    if (!error && data) {
-      setProdutos(data);
-    }
+    if (!error && data) setProdutos(data);
     setCarregando(false);
   }
 
-  useEffect(() => {
+  useEffect(() => { carregarProdutos(); }, []);
+
+  const lista = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return produtos.filter((p) => {
+      if (termo && !p.nome.toLowerCase().includes(termo)) return false;
+      if (filtro === 'Todos') return true;
+      if (filtro === 'Sem categoria') return !p.categoria || !p.categoria.trim();
+      return p.categoria === filtro;
+    });
+  }, [produtos, filtro, busca]);
+
+  const contagem = (cat: string) => produtos.filter((p) => p.categoria === cat).length;
+  const semCategoria = produtos.filter((p) => !p.categoria || !p.categoria.trim()).length;
+
+  function abrirNovo() {
+    setForm(FORM_VAZIO);
+    setEditando('novo');
+  }
+
+  function abrirEdicao(p: Produto) {
+    setForm({
+      nome: p.nome,
+      preco: String(p.preco_venda ?? '').replace('.', ','),
+      categoria: p.categoria || '',
+      consumer: p.id_consumer || '',
+      goomer: p.id_goomer || '',
+      ifood: p.id_ifood || '',
+    });
+    setEditando(p);
+  }
+
+  async function salvarProduto(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.nome.trim()) return avisar('Informe o nome do produto.', 'erro');
+    setSalvando(true);
+
+    const payload: Record<string, unknown> = {
+      nome: form.nome.trim(),
+      preco_venda: paraNumero(form.preco) || 0,
+      categoria: form.categoria || null,
+      id_consumer: form.consumer.trim() || null,
+      id_goomer: form.goomer.trim() || null,
+      id_ifood: form.ifood.trim() || null,
+    };
+
+    let error;
+    if (editando === 'novo') {
+      const { data: config } = await supabase.from('configuracoes_loja').select('custo_fixo_padrao').limit(1).maybeSingle();
+      ({ error } = await supabase.from('produtos').insert({ ...payload, custo_fixo: config?.custo_fixo_padrao ?? 1.5, ativo: true }));
+    } else if (editando) {
+      ({ error } = await supabase.from('produtos').update(payload).eq('id', editando.id));
+    }
+
+    setSalvando(false);
+    if (error) return avisar('Erro ao salvar produto: ' + error.message, 'erro');
+    avisar(editando === 'novo' ? 'Produto cadastrado.' : 'Produto atualizado.');
+    setEditando(null);
     carregarProdutos();
-  }, []);
-
-  // Cadastrar novo produto
-  async function handleCadastrar(e: React.FormEvent) {
-    e.preventDefault();
-    setCarregando(true);
-
-    const { data: config } = await supabase.from('configuracoes_loja').select('*').limit(1).maybeSingle();
-
-    const payload = {
-      nome: nome.trim(),
-      preco_venda: Number(precoVenda.replace(',', '.')) || 0,
-      custo_fixo: config?.custo_fixo_padrao || 1.50,
-      categoria: categoria || null,
-      id_consumer: idConsumer.trim() || null,
-      id_goomer: idGoomer.trim() || null,
-      id_ifood: idIfood.trim() || null,
-      ativo: true,
-    };
-
-    const { error } = await supabase.from('produtos').insert(payload);
-    if (error) {
-      alert('Erro ao cadastrar produto: ' + error.message);
-    } else {
-      setNome('');
-      setPrecoVenda('');
-      setCategoria('');
-      setIdConsumer('');
-      setIdGoomer('');
-      setIdIfood('');
-      await carregarProdutos();
-    }
-
-    setCarregando(false);
   }
 
-  // Abrir Modal de Edição
-  function abrirModalEdicao(prod: Produto) {
-    setProdutoEditando(prod);
-    setEditNome(prod.nome);
-    setEditPrecoVenda(String(prod.preco_venda ?? ''));
-    setEditCategoria(prod.categoria || '');
-    setEditIdConsumer(prod.id_consumer || '');
-    setEditIdGoomer(prod.id_goomer || '');
-    setEditIdIfood(prod.id_ifood || '');
+  async function alternarStatus(p: Produto) {
+    const { error } = await supabase.from('produtos').update({ ativo: !p.ativo }).eq('id', p.id);
+    if (error) return avisar('Erro ao alterar status: ' + error.message, 'erro');
+    avisar(p.ativo ? 'Produto desativado.' : 'Produto ativado.');
+    setEditando(null);
+    carregarProdutos();
   }
 
-  // Salvar alterações da edição
-  async function handleSalvarEdicao(e: React.FormEvent) {
-    e.preventDefault();
-    if (!produtoEditando) return;
-
-    setSalvandoEdicao(true);
-
-    const payload = {
-      nome: editNome.trim(),
-      preco_venda: Number(String(editPrecoVenda).replace(',', '.')) || 0,
-      categoria: editCategoria || null,
-      id_consumer: editIdConsumer.trim() || null,
-      id_goomer: editIdGoomer.trim() || null,
-      id_ifood: editIdIfood.trim() || null,
-    };
-
-    const { error } = await supabase
-      .from('produtos')
-      .update(payload)
-      .eq('id', produtoEditando.id);
-
-    if (error) {
-      alert('Erro ao atualizar produto: ' + error.message);
-    } else {
-      setProdutoEditando(null);
-      await carregarProdutos();
-    }
-
-    setSalvandoEdicao(false);
-  }
-
-  async function alternarStatus(prod: Produto) {
-    const { error } = await supabase
-      .from('produtos')
-      .update({ ativo: !prod.ativo })
-      .eq('id', prod.id);
-
-    if (error) {
-      alert('Erro ao alterar status: ' + error.message);
-    } else {
-      carregarProdutos();
-    }
-  }
-
-  async function apagarProduto(id: string, nomeProd: string) {
-    if (!confirm(`Tem certeza que deseja apagar o produto "${nomeProd}"?`)) return;
-    const { error } = await supabase.from('produtos').delete().eq('id', id);
+  async function apagarProduto(p: Produto) {
+    if (!confirm(`Apagar o produto "${p.nome}"? Essa ação não pode ser desfeita.`)) return;
+    const { error } = await supabase.from('produtos').delete().eq('id', p.id);
     if (error) {
       // 23503 = chave estrangeira: o produto já aparece em vendas
-      alert(error.code === '23503'
+      return avisar(error.code === '23503'
         ? 'Este produto já tem vendas registradas e não pode ser apagado. Use "Desativar".'
-        : 'Erro ao apagar produto: ' + error.message);
-    } else {
+        : 'Erro ao apagar produto: ' + error.message, 'erro');
+    }
+    avisar('Produto apagado.');
+    setEditando(null);
+    carregarProdutos();
+  }
+
+  // ---------- custo fixo (vale para todos os produtos e preparos) ----------
+  async function abrirCustoFixo() {
+    setCustoAberto(true);
+    setCustoFixo('');
+    const { data } = await supabase.from('configuracoes_loja').select('*').limit(1);
+    if (data && data.length > 0) {
+      setConfigId(data[0].id);
+      const val = data[0].custo_fixo_padrao ?? data[0].custo_salao_padrao;
+      if (val !== undefined && val !== null) return setCustoFixo(String(val).replace('.', ','));
+    }
+    const primeiro = produtos[0];
+    setCustoFixo(String(primeiro?.custo_fixo ?? 1.5).replace('.', ','));
+  }
+
+  async function salvarCustoFixo(e: React.FormEvent) {
+    e.preventDefault();
+    const valor = paraNumero(custoFixo);
+    if (isNaN(valor) || valor < 0) return avisar('Informe um valor válido.', 'erro');
+    setSalvandoCusto(true);
+    try {
+      if (configId) {
+        const { error } = await supabase.from('configuracoes_loja').update({ custo_fixo_padrao: valor, updated_at: new Date().toISOString() }).eq('id', configId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.from('configuracoes_loja').insert([{ custo_fixo_padrao: valor }]).select();
+        if (error) throw error;
+        if (data && data[0]) setConfigId(data[0].id);
+      }
+      const { error: erroProdutos } = await supabase.from('produtos').update({ custo_fixo: valor }).neq('id', '00000000-0000-0000-0000-000000000000');
+      if (erroProdutos) throw erroProdutos;
+      const { error: erroPreparos } = await supabase.from('ingredientes').update({ custo_fixo: valor }).eq('e_produzido_internamente', true);
+      if (erroPreparos) throw erroPreparos;
+
+      avisar(`Custo fixo de ${brl(valor)} aplicado a todos os produtos e preparos.`);
+      setCustoAberto(false);
       carregarProdutos();
+    } catch (err: any) {
+      avisar('Erro ao salvar custo fixo: ' + err.message, 'erro');
+    } finally {
+      setSalvandoCusto(false);
     }
   }
 
-  const produtosFiltrados = produtos.filter(prod => {
-    if (filtroCategoria === 'Todos') return true;
-    if (filtroCategoria === 'Sem Categoria') return !prod.categoria || prod.categoria.trim() === '';
-    return prod.categoria === filtroCategoria;
-  });
+  const campo = (k: keyof Form) => ({ value: form[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm({ ...form, [k]: e.target.value }) });
+  const produtoEditado = editando && editando !== 'novo' ? editando : null;
 
   return (
     <>
-      <TopBar titulo="Gerenciamento de Produtos" showCustoFixo={true} />
-
-      <style dangerouslySetInnerHTML={{__html: `
-        .scroll-chips::-webkit-scrollbar { height: 6px; }
-        .scroll-chips::-webkit-scrollbar-track { background: transparent; }
-        .scroll-chips::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
-        .scroll-chips::-webkit-scrollbar-thumb:hover { background: var(--dim); }
-
-        /* CLASSES RESPONSIVAS PARA O FORMULÁRIO */
-        .form-row-2-1-1 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 15px; margin-bottom: 15px; }
-        .form-row-1-1-1 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .input-group { display: flex; flex-direction: column; justify-content: flex-end; }
-
-        @media (max-width: 768px) {
-          /* No celular, empilha os campos um debaixo do outro para não espremer */
-          .form-row-2-1-1, .form-row-1-1-1 { grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
+      <PageHeader
+        titulo="Produtos"
+        subtitulo={`${produtos.length} no cardápio · ${produtos.filter((p) => !p.ativo).length} inativos`}
+        acoes={
+          <>
+            <button className="bt bt-sec bt-ic-mob" onClick={abrirCustoFixo} aria-label="Custo fixo">
+              <IcoCustos size={17} /><span>Custo fixo</span>
+            </button>
+            <button className="bt bt-prim bt-ic-mob" onClick={abrirNovo} aria-label="Novo produto">
+              <IcoMais size={17} /><span>Novo</span>
+            </button>
+          </>
         }
-      `}} />
+      />
 
-      <div className="wrap">
-        <div className="lbl">Cadastrar Novo Produto</div>
-
-        <div className="panel" style={{ padding: '20px', marginBottom: '24px' }}>
-          <form onSubmit={handleCadastrar}>
-            
-            {/* LINHA 1 */}
-            <div className="form-row-2-1-1">
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Nome do Produto</label>
-                <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: King Classic Simples" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
-              </div>
-
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Categoria</label>
-                <select value={categoria} onChange={(e) => setCategoria(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required>
-                  <option value="">Selecione...</option>
-                  {CATEGORIAS.map((cat) => ( <option key={cat} value={cat}>{cat}</option> ))}
-                </select>
-              </div>
-
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Preço de Venda (R$)</label>
-                <input type="text" placeholder="0,00" value={precoVenda} onChange={(e) => setPrecoVenda(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
-              </div>
-            </div>
-
-            {/* LINHA 2 (IDS DE INTEGRAÇÃO) */}
-            <div className="form-row-1-1-1">
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Consumer (Bela Vista)</label>
-                <input type="text" value={idConsumer} onChange={(e) => setIdConsumer(e.target.value)} placeholder="Ex: 105" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-              </div>
-
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Goomer (João Monlevade)</label>
-                <input type="text" value={idGoomer} onChange={(e) => setIdGoomer(e.target.value)} placeholder="Ex: 992" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-              </div>
-
-              <div className="input-group">
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID iFood</label>
-                <input type="text" value={idIfood} onChange={(e) => setIdIfood(e.target.value)} placeholder="Ex: 504" style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-              </div>
-            </div>
-
-            <button type="submit" disabled={carregando} style={{ width: '100%', padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '8px' }}>
-              {carregando ? 'Cadastrando...' : '+ Cadastrar Produto'}
-            </button>
-          </form>
+      <div className="pg">
+        <div className="filtros">
+          <label className="busca">
+            <IcoBusca size={17} />
+            <input className="inp" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar produto…" aria-label="Buscar produto" />
+          </label>
+          <div className="chips" role="group" aria-label="Filtrar por categoria">
+            <button className={'chip' + (filtro === 'Todos' ? ' act' : '')} onClick={() => setFiltro('Todos')}>Todos <span className="n">{produtos.length}</span></button>
+            {CATEGORIAS.filter((c) => contagem(c) > 0).map((cat) => (
+              <button key={cat} className={'chip' + (filtro === cat ? ' act' : '')} onClick={() => setFiltro(cat)}>
+                {cat} <span className="n">{contagem(cat)}</span>
+              </button>
+            ))}
+            {semCategoria > 0 && (
+              <button className={'chip' + (filtro === 'Sem categoria' ? ' act' : '')} onClick={() => setFiltro('Sem categoria')}>
+                Sem categoria <span className="n">{semCategoria}</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* BARRA DE FILTROS */}
-        <div className="scroll-chips" style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '12px', marginBottom: '8px' }}>
-          {['Todos', ...CATEGORIAS, 'Sem Categoria'].map((cat) => (
-            <button key={cat} onClick={() => setFiltroCategoria(cat)} style={{ padding: '8px 16px', whiteSpace: 'nowrap', background: filtroCategoria === cat ? 'var(--gold)' : 'var(--surf)', color: filtroCategoria === cat ? '#000' : 'var(--txt)', border: filtroCategoria === cat ? 'none' : '1px solid var(--line)', borderRadius: '20px', fontWeight: filtroCategoria === cat ? 'bold' : 'normal', cursor: 'pointer', fontSize: '13px', transition: 'all 0.2s' }}>
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        {/* LISTAGEM DE PRODUTOS */}
-        <div className="lbl" style={{ marginTop: '16px' }}>Produtos Cadastrados ({produtosFiltrados.length})</div>
-
-        <div className="panel">
-          {produtosFiltrados.map((p) => (
-            <div key={p.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '16px', padding: '16px 20px', borderBottom: '1px solid var(--line)', opacity: p.ativo ? 1 : 0.5 }}>
-              <div style={{ flex: '1 1 200px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <b style={{ color: 'var(--txt)', fontSize: 16 }}>{p.nome}</b>
-                  {!p.ativo && ( <span style={{ fontSize: 11, background: 'var(--rdim)', color: 'var(--red)', padding: '2px 6px', borderRadius: '4px' }}>Inativo</span> )}
-                </div>
-                <div style={{ marginTop: 6, fontSize: 14 }}>
-                  <span style={{ color: 'var(--gold)', fontWeight: 'bold' }}>Venda: {brl(p.preco_venda)}</span>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--dim)' }}>
-                  Consumer: <b>{p.id_consumer || '—'}</b> · Goomer: <b>{p.id_goomer || '—'}</b> · iFood: <b>{p.id_ifood || '—'}</b>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginLeft: 'auto' }}>
-                <button onClick={() => abrirModalEdicao(p)} style={{ background: 'var(--surf)', color: 'var(--txt)', border: '1px solid var(--line)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: 13 }}>Editar</button>
-                <button onClick={() => alternarStatus(p)} style={{ background: 'var(--surf)', color: p.ativo ? 'var(--gold)' : 'var(--grn)', border: '1px solid var(--line)', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: 13 }}>{p.ativo ? 'Desativar' : 'Ativar'}</button>
-                <button onClick={() => apagarProduto(p.id, p.nome)} style={{ background: 'var(--rdim)', color: 'var(--red)', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: 13 }}>Apagar</button>
-              </div>
+        <div className="lista">
+          {carregando ? (
+            <div className="vazio">Carregando produtos…</div>
+          ) : lista.length === 0 ? (
+            <div className="vazio">
+              {produtos.length === 0 ? 'Nenhum produto cadastrado ainda. Toque em "Novo" para começar.' : 'Nenhum produto nesse filtro.'}
             </div>
-          ))}
-
-          {produtosFiltrados.length === 0 && !carregando && (
-            <div className="vazio" style={{ padding: '24px', textAlign: 'center' }}>Nenhum produto encontrado na categoria "{filtroCategoria}".</div>
+          ) : (
+            lista.map((p) => (
+              <button key={p.id} className={'item' + (p.ativo ? '' : ' off')} onClick={() => abrirEdicao(p)}>
+                <div className="item-main">
+                  <div className="item-tit">
+                    {p.nome}
+                    {!p.ativo && <span className="tag r">Inativo</span>}
+                  </div>
+                  <div className="item-sub">{p.categoria || 'Sem categoria'}</div>
+                  {(p.id_consumer || p.id_goomer || p.id_ifood) && (
+                    <div className="pilulas">
+                      {p.id_consumer && <span className="pilula">Consumer <b>{p.id_consumer}</b></span>}
+                      {p.id_goomer && <span className="pilula">Goomer <b>{p.id_goomer}</b></span>}
+                      {p.id_ifood && <span className="pilula">iFood <b>{p.id_ifood}</b></span>}
+                    </div>
+                  )}
+                </div>
+                <div className="item-dir">
+                  <div className="item-val" style={{ color: 'var(--gold)' }}>{brl(p.preco_venda)}</div>
+                </div>
+                <IcoSeta size={16} className="item-chev" />
+              </button>
+            ))
           )}
         </div>
       </div>
 
-      {/* MODAL DE EDIÇÃO */}
-      {produtoEditando && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="panel custom-scroll" style={{ width: '100%', maxWidth: '650px', padding: '24px', borderRadius: '12px', background: 'var(--bg)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', border: '1px solid var(--line)', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ margin: 0, color: 'var(--txt)' }}>Editar Produto</h3>
-              <button onClick={() => setProdutoEditando(null)} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '20px', cursor: 'pointer' }}>✕</button>
-            </div>
-
-            <form onSubmit={handleSalvarEdicao}>
-              <div className="form-row-2-1-1">
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Nome do Produto</label>
-                  <input type="text" value={editNome} onChange={(e) => setEditNome(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
-                </div>
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Categoria</label>
-                  <select value={editCategoria} onChange={(e) => setEditCategoria(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required>
-                    <option value="">Selecione...</option>
-                    {CATEGORIAS.map((cat) => ( <option key={cat} value={cat}>{cat}</option> ))}
-                  </select>
-                </div>
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>Preço de Venda (R$)</label>
-                  <input type="text" value={editPrecoVenda} onChange={(e) => setEditPrecoVenda(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} required />
-                </div>
-              </div>
-
-              <div className="form-row-1-1-1">
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Consumer</label>
-                  <input type="text" value={editIdConsumer} onChange={(e) => setEditIdConsumer(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-                </div>
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID Goomer</label>
-                  <input type="text" value={editIdGoomer} onChange={(e) => setEditIdGoomer(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-                </div>
-                <div className="input-group">
-                  <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--dim)' }}>ID iFood</label>
-                  <input type="text" value={editIdIfood} onChange={(e) => setEditIdIfood(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, marginTop: '8px' }}>
-                <button type="submit" disabled={salvandoEdicao} style={{ flex: 1, padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-                  {salvandoEdicao ? 'Salvando...' : 'Salvar Alterações'}
-                </button>
-                <button type="button" onClick={() => setProdutoEditando(null)} style={{ padding: '12px 20px', background: 'var(--surf)', color: 'var(--txt)', border: '1px solid var(--line)', borderRadius: '8px', cursor: 'pointer' }}>
-                  Cancelar
-                </button>
-              </div>
-            </form>
+      {/* ---------- cadastrar / editar produto ---------- */}
+      <Sheet
+        aberto={!!editando}
+        titulo={editando === 'novo' ? 'Novo produto' : 'Editar produto'}
+        subtitulo={produtoEditado ? produtoEditado.nome : 'Preencha os dados do cardápio'}
+        onFechar={() => setEditando(null)}
+        rodape={
+          <>
+            {produtoEditado && (
+              <button type="button" className="bt bt-perigo bt-ic" onClick={() => apagarProduto(produtoEditado)} aria-label="Apagar produto">
+                <IcoLixo size={18} />
+              </button>
+            )}
+            {produtoEditado && (
+              <button type="button" className="bt bt-sec" onClick={() => alternarStatus(produtoEditado)}>
+                {produtoEditado.ativo ? 'Desativar' : 'Ativar'}
+              </button>
+            )}
+            <button type="submit" form="form-produto" className="bt bt-prim" disabled={salvando}>
+              {salvando ? 'Salvando…' : editando === 'novo' ? 'Cadastrar' : 'Salvar'}
+            </button>
+          </>
+        }
+      >
+        <form id="form-produto" onSubmit={salvarProduto}>
+          <div className="field">
+            <label htmlFor="p-nome">Nome do produto</label>
+            <input id="p-nome" {...campo('nome')} placeholder="Ex: King Classic Simples" required />
           </div>
-        </div>
-      )}
+          <div className="field2">
+            <div className="field">
+              <label htmlFor="p-cat">Categoria</label>
+              <select id="p-cat" {...campo('categoria')} required>
+                <option value="">Selecione…</option>
+                {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="p-preco">Preço de venda</label>
+              <div className="inp-un">
+                <input id="p-preco" inputMode="decimal" {...campo('preco')} placeholder="0,00" required />
+                <span>R$</span>
+              </div>
+            </div>
+          </div>
+          <div className="sheet-sec" style={{ marginTop: 6 }}>Códigos nos sistemas de venda</div>
+          <div className="field3">
+            <div className="field">
+              <label htmlFor="p-consumer">Consumer</label>
+              <input id="p-consumer" {...campo('consumer')} placeholder="Bela Vista" />
+            </div>
+            <div className="field">
+              <label htmlFor="p-goomer">Goomer</label>
+              <input id="p-goomer" {...campo('goomer')} placeholder="J. Monlevade" />
+            </div>
+            <div className="field">
+              <label htmlFor="p-ifood">iFood</label>
+              <input id="p-ifood" {...campo('ifood')} placeholder="—" />
+            </div>
+          </div>
+        </form>
+      </Sheet>
+
+      {/* ---------- custo fixo ---------- */}
+      <Sheet
+        aberto={custoAberto}
+        titulo="Custo fixo"
+        subtitulo="Embalagem, gás, energia… por produto"
+        onFechar={() => setCustoAberto(false)}
+        rodape={
+          <>
+            <button type="button" className="bt bt-sec" onClick={() => setCustoAberto(false)}>Cancelar</button>
+            <button type="submit" form="form-custo" className="bt bt-prim" disabled={salvandoCusto || !custoFixo}>
+              {salvandoCusto ? 'Aplicando…' : 'Aplicar a tudo'}
+            </button>
+          </>
+        }
+      >
+        <form id="form-custo" onSubmit={salvarCustoFixo}>
+          <p className="nota" style={{ marginBottom: 16 }}>
+            Esse valor é somado ao custo dos insumos de <strong>cada produto</strong> e de <strong>cada lote de preparo</strong>.
+            Ao salvar, ele é aplicado a todos de uma vez.
+          </p>
+          <div className="field">
+            <label htmlFor="custo-fixo">Custo fixo por produto</label>
+            <div className="inp-un">
+              <input id="custo-fixo" inputMode="decimal" value={custoFixo} onChange={(e) => setCustoFixo(e.target.value)} placeholder={custoFixo ? '' : 'Carregando…'} required />
+              <span>R$</span>
+            </div>
+          </div>
+        </form>
+      </Sheet>
     </>
   );
 }

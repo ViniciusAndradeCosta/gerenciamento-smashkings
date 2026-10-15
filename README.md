@@ -33,7 +33,7 @@ Veja o guia detalhado em **SETUP.md**. Resumo:
 app/            telas (dashboard, estoque, compras, cmv, comparativo, produtos, fichas, preparos, login)
 app/api/        extrair-nf — leitura de nota fiscal com o Gemini
 app/chat/       actions.ts — Server Action do assistente (resumo do banco + Gemini)
-components/     AppNav, TopBar, UnitSwitcher, CompraForm, ImportarNotaForm, ChatWidget (botão 🍔), ChatAssistente, SW
+components/     AppNav, PageHeader, Sheet (janela), Toaster (avisos), UnitSwitcher, CompraForm, ImportarNotaForm, ChatWidget, ChatAssistente, SW
 lib/supabase/   clientes Supabase (browser, server, middleware)
 supabase/       schema.sql (banco, idempotente) + seed.sql (dados de exemplo, só para teste)
 public/         PWA (manifest, service worker, ícone)

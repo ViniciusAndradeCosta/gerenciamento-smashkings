@@ -1,118 +1,98 @@
 'use client';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { avisar } from './Toaster';
+import { brl } from '@/lib/format';
 
 type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string };
 
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
+
 export default function CompraForm({
-  unidades, ingredientes, fornecedores, unidadeInicial
+  unidades, ingredientes, fornecedores, unidadeInicial,
 }: {
   unidades: Opt[]; ingredientes: Opt[]; fornecedores: Opt[]; unidadeInicial?: string;
 }) {
+  const router = useRouter();
   const [unidade, setUnidade] = useState(unidadeInicial || unidades[0]?.id || '');
-  
-  // Agora o estado guarda o texto digitado/selecionado do ingrediente
   const [ingredienteInput, setIngredienteInput] = useState('');
-  
-  // O estado do fornecedor guarda o texto digitado/selecionado
   const [fornecedorInput, setFornecedorInput] = useState('');
-  
   const [quantidade, setQuantidade] = useState('');
   const [precoUnitario, setPrecoUnitario] = useState('');
   const [medidaNova, setMedidaNova] = useState('UN');
   const [carregando, setCarregando] = useState(false);
 
   // Descobre a unidade de medida se o ingrediente já existir na lista
-  const ingEncontrado = ingredientes.find(i => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim());
+  const ingEncontrado = ingredientes.find((i) => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim());
   const ingredienteNovo = !ingEncontrado && ingredienteInput.trim() !== '';
   const siglaMedida = ingEncontrado?.unidade_medida || medidaNova;
+  const totalPrevisto = paraNumero(quantidade) * paraNumero(precoUnitario);
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    if (!ingredienteInput.trim()) {
-      alert('Por favor, informe o ingrediente.');
-      return;
-    }
+    const q = paraNumero(quantidade);
+    const p = paraNumero(precoUnitario);
+    if (!ingredienteInput.trim()) return avisar('Informe o insumo.', 'erro');
+    if (!(q > 0)) return avisar('Informe uma quantidade maior que zero.', 'erro');
+    if (isNaN(p) || p < 0) return avisar('Informe um preço válido.', 'erro');
 
     setCarregando(true);
     const supabase = createClient();
-    
-    try {
-      let idDoIngrediente = null;
-      let idDoFornecedor = null;
-      
-      // 1. GERENCIAMENTO DO INGREDIENTE (Busca ou Cria Automaticamente)
-      const ingredienteExistente = ingredientes.find(
-        i => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim()
-      );
 
-      if (ingredienteExistente) {
-        idDoIngrediente = ingredienteExistente.id;
-      } else {
-        // Se o ingrediente não existe, cria um novo na tabela 'ingredientes'
+    try {
+      let idDoIngrediente = ingEncontrado?.id || null;
+      let idDoFornecedor = null;
+
+      // 1. Insumo: usa o existente ou cria um novo
+      if (!idDoIngrediente) {
         const { data: novoIng, error: erroIng } = await supabase
           .from('ingredientes')
-          .insert({ 
-            nome: ingredienteInput.trim(),
-            unidade_medida: medidaNova,
-            ativo: true
-          })
+          .insert({ nome: ingredienteInput.trim(), unidade_medida: medidaNova, ativo: true })
           .select('id')
           .single();
-          
-        if (erroIng) throw new Error("Erro ao criar novo ingrediente: " + erroIng.message);
+        if (erroIng) throw new Error('Erro ao criar novo insumo: ' + erroIng.message);
         idDoIngrediente = novoIng.id;
       }
 
-      // 2. GERENCIAMENTO DO FORNECEDOR (Busca ou Cria se preenchido)
+      // 2. Fornecedor (opcional): usa o existente ou cria um novo
       if (fornecedorInput.trim() !== '') {
-        const fornecedorExistente = fornecedores.find(
-          f => f.nome.toLowerCase().trim() === fornecedorInput.toLowerCase().trim()
-        );
-
-        if (fornecedorExistente) {
-          idDoFornecedor = fornecedorExistente.id;
+        const existente = fornecedores.find((f) => f.nome.toLowerCase().trim() === fornecedorInput.toLowerCase().trim());
+        if (existente) {
+          idDoFornecedor = existente.id;
         } else {
           const { data: novoForn, error: erroForn } = await supabase
             .from('fornecedores')
             .insert({ nome: fornecedorInput.trim() })
             .select('id')
             .single();
-            
-          if (erroForn) throw new Error("Erro ao criar novo fornecedor: " + erroForn.message);
+          if (erroForn) throw new Error('Erro ao criar novo fornecedor: ' + erroForn.message);
           idDoFornecedor = novoForn.id;
         }
       }
 
-      // 3. SALVA A COMPRA
-      const { error: erroCompra } = await supabase
-        .from('compras')
-        .insert({
-          unidade_id: unidade,
-          ingrediente_id: idDoIngrediente,
-          fornecedor_id: idDoFornecedor,
-          quantidade: Number(quantidade),
-          preco_unitario: Number(precoUnitario.replace(',', '.'))
-        });
-
+      // 3. A compra (o banco soma ao estoque e recalcula o custo médio)
+      const { error: erroCompra } = await supabase.from('compras').insert({
+        unidade_id: unidade,
+        ingrediente_id: idDoIngrediente,
+        fornecedor_id: idDoFornecedor,
+        quantidade: q,
+        preco_unitario: p,
+      });
       if (erroCompra) {
         throw new Error(erroCompra.message.includes('row-level security')
           ? 'Você não tem permissão para lançar compras nesta unidade.'
-          : "Erro ao salvar compra: " + erroCompra.message);
+          : 'Erro ao salvar compra: ' + erroCompra.message);
       }
-      
-      alert("Compra registrada com sucesso!");
-      
-      // Limpa os campos para o próximo lançamento
+
+      avisar(`Compra de ${ingredienteInput.trim()} registrada.`);
       setQuantidade('');
       setPrecoUnitario('');
       setIngredienteInput('');
       setFornecedorInput('');
-      window.location.reload();
-      
+      router.refresh();
     } catch (err: any) {
-      alert(err.message);
-      console.error(err);
+      avisar(err.message, 'erro');
     } finally {
       setCarregando(false);
     }
@@ -120,96 +100,71 @@ export default function CompraForm({
 
   return (
     <form onSubmit={salvar}>
-      <div className="field" style={{ marginBottom: 15 }}>
-        <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Unidade</label>
-        <select 
-          value={unidade} 
-          onChange={(e) => setUnidade(e.target.value)}
-          style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-          required
-        >
-          {unidades.map(u => <option key={u.id} value={u.id}>{u.nome}</option>)}
+      <div className="field">
+        <label htmlFor="cf-unidade">Unidade</label>
+        <select id="cf-unidade" value={unidade} onChange={(e) => setUnidade(e.target.value)} required>
+          {unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
         </select>
       </div>
 
-      {/* CAMPO HÍBRIDO DE INGREDIENTE (Digitar ou Selecionar) */}
-      <div className="field" style={{ marginBottom: 15 }}>
-        <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Ingrediente</label>
-        <input 
-          list="lista-ingredientes" 
-          value={ingredienteInput} 
+      <div className="field">
+        <label htmlFor="cf-insumo">Insumo</label>
+        <input
+          id="cf-insumo" list="lista-ingredientes" value={ingredienteInput}
           onChange={(e) => setIngredienteInput(e.target.value)}
-          placeholder="Selecione da lista ou digite um novo..."
-          style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-          required
+          placeholder="Escolha da lista ou digite um novo" autoComplete="off" required
         />
         <datalist id="lista-ingredientes">
-          {ingredientes.map(i => (
-            <option key={i.id} value={i.nome} />
-          ))}
+          {ingredientes.map((i) => <option key={i.id} value={i.nome} />)}
         </datalist>
+        {ingredienteNovo && <p className="dica" style={{ color: 'var(--gold)' }}>Insumo novo — será cadastrado junto com a compra.</p>}
       </div>
 
       {/* Insumo novo: escolhe a medida (não dá para mudar depois pela tela) */}
       {ingredienteNovo && (
-        <div className="field" style={{ marginBottom: 15 }}>
-          <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--gold)' }}>Novo insumo — medida</label>
-          <select
-            value={medidaNova}
-            onChange={(e) => setMedidaNova(e.target.value)}
-            style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-          >
-            {['UN', 'KG', 'G', 'L', 'ML'].map(m => <option key={m} value={m}>{m}</option>)}
+        <div className="field">
+          <label htmlFor="cf-medida">Medida do novo insumo</label>
+          <select id="cf-medida" value={medidaNova} onChange={(e) => setMedidaNova(e.target.value)}>
+            {['UN', 'KG', 'G', 'L', 'ML'].map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
       )}
 
-      {/* CAMPO HÍBRIDO DE FORNECEDOR (Digitar ou Selecionar) */}
-      <div className="field" style={{ marginBottom: 15 }}>
-        <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Fornecedor</label>
-        <input 
-          list="lista-fornecedores" 
-          value={fornecedorInput} 
-          onChange={(e) => setFornecedorInput(e.target.value)}
-          placeholder="— opcional — (Selecione ou digite um novo)"
-          style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
+      <div className="field">
+        <label htmlFor="cf-fornecedor">Fornecedor <span style={{ color: 'var(--mut2)', fontWeight: 500 }}>(opcional)</span></label>
+        <input
+          id="cf-fornecedor" list="lista-fornecedores" value={fornecedorInput}
+          onChange={(e) => setFornecedorInput(e.target.value)} placeholder="Escolha ou digite um novo" autoComplete="off"
         />
         <datalist id="lista-fornecedores">
-          {fornecedores.map(f => (
-            <option key={f.id} value={f.nome} />
-          ))}
+          {fornecedores.map((f) => <option key={f.id} value={f.nome} />)}
         </datalist>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15, marginBottom: 20 }}>
+      <div className="field2">
         <div className="field">
-          <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Quantidade ({siglaMedida})</label>
-          <input 
-            type="number" 
-            step="0.01" 
-            min="0"
-            value={quantidade} 
-            onChange={(e) => setQuantidade(e.target.value)}
-            style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-            required 
-          />
+          <label htmlFor="cf-qtd">Quantidade</label>
+          <div className="inp-un">
+            <input id="cf-qtd" inputMode="decimal" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" required />
+            <span>{siglaMedida}</span>
+          </div>
         </div>
         <div className="field">
-          <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>Preço unit. (R$)</label>
-          <input 
-            type="number" 
-            step="0.01" 
-            min="0"
-            value={precoUnitario} 
-            onChange={(e) => setPrecoUnitario(e.target.value)}
-            style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-            required 
-          />
+          <label htmlFor="cf-preco">Preço por {siglaMedida}</label>
+          <div className="inp-un">
+            <input id="cf-preco" inputMode="decimal" value={precoUnitario} onChange={(e) => setPrecoUnitario(e.target.value)} placeholder="0,00" required />
+            <span>R$</span>
+          </div>
         </div>
       </div>
 
-      <button type="submit" className="btn prim" disabled={carregando} style={{ width: '100%', padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-        {carregando ? 'Registrando...' : '+ Registrar compra'}
+      <div className="total-linha">
+        <span>Total da compra</span>
+        <b>{totalPrevisto > 0 ? brl(totalPrevisto) : '—'}</b>
+      </div>
+
+      <button type="submit" className="btn prim" disabled={carregando}>
+        {carregando ? 'Registrando…' : 'Registrar compra'}
       </button>
     </form>
   );

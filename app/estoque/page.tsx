@@ -1,31 +1,44 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import TopBar from '@/components/TopBar';
+import { useState, useEffect, useMemo } from 'react';
+import PageHeader from '@/components/PageHeader';
+import Sheet from '@/components/Sheet';
+import { avisar } from '@/components/Toaster';
+import { IcoBusca, IcoEstoque, IcoPreparos, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
-import { brl, num } from '@/lib/format';
+import { brl } from '@/lib/format';
 
 type Unidade = { id: string; nome: string; codigo?: string; cor?: string };
 type Ingrediente = { id: string; nome: string; unidade_medida: string; custo_medio: number; e_produzido_internamente: boolean; estoque_minimo?: number };
 type Estoque = { unidade_id: string; ingrediente_id: string; quantidade: number };
+type Status = 'esgotado' | 'acabando' | 'normal';
+
+const STATUS: Record<Status, { txt: string; tag: string; ordem: number }> = {
+  esgotado: { txt: 'Esgotado', tag: 'r', ordem: 0 },
+  acabando: { txt: 'Acabando', tag: 'o', ordem: 1 },
+  normal: { txt: 'Normal', tag: 'g', ordem: 2 },
+};
+
+/** Quantidade sem zeros sobrando: 14, 0,42, 1,5 */
+const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
 
 export default function EstoquePage() {
   const supabase = createClient();
-  
+
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [ingredientes, setIngredientes] = useState<Ingrediente[]>([]);
   const [estoques, setEstoques] = useState<Estoque[]>([]);
   const [carregando, setCarregando] = useState(true);
 
-  // Estados dos Filtros
   const [unidadeFiltro, setUnidadeFiltro] = useState('Todas');
-  const [tipoFiltro, setTipoFiltro] = useState('Brutos'); 
+  const [tipo, setTipo] = useState<'insumos' | 'preparos'>('insumos');
+  const [busca, setBusca] = useState('');
 
-  // Estados de Edição Inline
-  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
-  const [editQtd, setEditQtd] = useState(''); 
-  const [editQtdsUnidades, setEditQtdsUnidades] = useState<Record<string, string>>({}); 
-  const [editMinimo, setEditMinimo] = useState(''); 
+  // ajuste (janela)
+  const [ajustando, setAjustando] = useState<Ingrediente | null>(null);
+  const [editQtds, setEditQtds] = useState<Record<string, string>>({});
+  const [editMinimo, setEditMinimo] = useState('');
   const [salvando, setSalvando] = useState(false);
 
   async function carregarDados() {
@@ -48,325 +61,205 @@ export default function EstoquePage() {
 
   useEffect(() => { carregarDados(); }, []);
 
-  function iniciarEdicao(ingrediente: Ingrediente, qtdAtual: number) {
-    setEditandoItemId(ingrediente.id);
-    setEditMinimo(String(ingrediente.estoque_minimo || 0).replace('.', ','));
-    
-    if (unidadeFiltro === 'Todas') {
-      const mapQtds: Record<string, string> = {};
-      unidades.forEach(u => {
-        const est = estoques.find(e => e.ingrediente_id === ingrediente.id && e.unidade_id === u.id);
-        mapQtds[u.id] = String(est ? est.quantidade : 0).replace('.', ',');
-      });
-      setEditQtdsUnidades(mapQtds);
-    } else {
-      setEditQtd(String(qtdAtual).replace('.', ','));
-    }
+  const unidadeDe = (id: string) => unidades.find((u) => u.id === id);
+  const qtdNaUnidade = (ingId: string, uniId: string) =>
+    Number(estoques.find((e) => e.ingrediente_id === ingId && e.unidade_id === uniId)?.quantidade || 0);
+
+  // linhas já calculadas: quantidade no filtro atual, status e valor
+  const linhas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return ingredientes
+      .filter((ing) => (tipo === 'preparos' ? ing.e_produzido_internamente === true : !ing.e_produzido_internamente))
+      .map((ing) => {
+        const doIngrediente = estoques.filter((e) => e.ingrediente_id === ing.id);
+        const qtdAtual = unidadeFiltro === 'Todas'
+          ? doIngrediente.reduce((s, e) => s + (Number(e.quantidade) || 0), 0)
+          : qtdNaUnidade(ing.id, unidadeFiltro);
+        const minimo = Number(ing.estoque_minimo || 0);
+        // com uma unidade filtrada, o status é o daquela unidade
+        const status: Status = qtdAtual <= 0 ? 'esgotado' : minimo > 0 && qtdAtual <= minimo ? 'acabando' : 'normal';
+        return { ing, doIngrediente, qtdAtual, minimo, status, valor: qtdAtual * Number(ing.custo_medio || 0) };
+      })
+      .sort((a, b) => STATUS[a.status].ordem - STATUS[b.status].ordem || a.ing.nome.localeCompare(b.ing.nome, 'pt-BR'))
+      .filter((l) => !termo || l.ing.nome.toLowerCase().includes(termo));
+  }, [ingredientes, estoques, tipo, unidadeFiltro, busca]);
+
+  const valorTotal = linhas.reduce((s, l) => s + l.valor, 0);
+  const emAlerta = linhas.filter((l) => l.status !== 'normal').length;
+
+  function abrirAjuste(ing: Ingrediente) {
+    const mapa: Record<string, string> = {};
+    unidades.forEach((u) => { mapa[u.id] = qtd(qtdNaUnidade(ing.id, u.id)).replace(/\./g, ''); });
+    setEditQtds(mapa);
+    setEditMinimo(String(ing.estoque_minimo || 0).replace('.', ','));
+    setAjustando(ing);
   }
 
-  async function salvarAjuste(ingredienteId: string) {
-    setSalvando(true);
-
+  async function salvarAjuste() {
+    if (!ajustando) return;
+    const ingredienteId = ajustando.id;
     // O supabase-js não lança exceção: devolve { error }. Sem checar, uma
     // falha (ex.: gerente ajustando outra unidade) parecia ter sido salva.
     const conferir = ({ error }: { error: { message: string } | null }) => {
       if (error) throw new Error(error.message);
     };
 
+    const alvo = unidadeFiltro === 'Todas' ? unidades : unidades.filter((u) => u.id === unidadeFiltro);
+    for (const u of alvo) {
+      const val = paraNumero(editQtds[u.id] || '0');
+      if (isNaN(val) || val < 0) { avisar(`Quantidade inválida em ${u.nome}.`, 'erro'); return; }
+    }
+
+    setSalvando(true);
     try {
-      const minVal = Number(editMinimo.replace(',', '.'));
-      if (!isNaN(minVal) && minVal >= 0) {
+      const minVal = paraNumero(editMinimo);
+      if (!isNaN(minVal) && minVal >= 0 && minVal !== Number(ajustando.estoque_minimo || 0)) {
         conferir(await supabase.from('ingredientes').update({ estoque_minimo: minVal }).eq('id', ingredienteId));
       }
 
-      if (unidadeFiltro === 'Todas') {
-        for (const u of unidades) {
-          const valStr = editQtdsUnidades[u.id] || '0';
-          const val = Number(valStr.replace(',', '.'));
-          if (isNaN(val) || val < 0) continue;
-
-          const match = estoques.find(e => e.unidade_id === u.id && e.ingrediente_id === ingredienteId);
-          if (match) {
-            if (Number(match.quantidade) === val) continue;
-            conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', u.id).eq('ingrediente_id', ingredienteId));
-          } else {
-            if (val === 0) continue;
-            conferir(await supabase.from('estoque').insert({ unidade_id: u.id, ingrediente_id: ingredienteId, quantidade: val }));
-          }
-        }
-      } else {
-        const val = Number(editQtd.replace(',', '.'));
-        if (isNaN(val) || val < 0) {
-          alert('Digite uma quantidade válida.');
-          setSalvando(false);
-          return;
-        }
-
-        const match = estoques.find(e => e.unidade_id === unidadeFiltro && e.ingrediente_id === ingredienteId);
+      for (const u of alvo) {
+        const val = paraNumero(editQtds[u.id] || '0');
+        const match = estoques.find((e) => e.unidade_id === u.id && e.ingrediente_id === ingredienteId);
         if (match) {
-          conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', unidadeFiltro).eq('ingrediente_id', ingredienteId));
+          if (Number(match.quantidade) === val) continue;
+          conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', u.id).eq('ingrediente_id', ingredienteId));
         } else {
-          conferir(await supabase.from('estoque').insert({ unidade_id: unidadeFiltro, ingrediente_id: ingredienteId, quantidade: val }));
+          if (val === 0) continue;
+          conferir(await supabase.from('estoque').insert({ unidade_id: u.id, ingrediente_id: ingredienteId, quantidade: val }));
         }
       }
 
-      setEditandoItemId(null);
+      avisar(`Estoque de ${ajustando.nome} atualizado.`);
+      setAjustando(null);
       await carregarDados();
     } catch (err: any) {
-      alert('Erro ao salvar estoque: ' + err.message);
+      avisar('Erro ao salvar estoque: ' + err.message, 'erro');
     } finally {
       setSalvando(false);
     }
   }
 
-  const ingredientesFiltrados = ingredientes.filter(ing => {
-    if (tipoFiltro === 'Preparos') return ing.e_produzido_internamente === true;
-    return !ing.e_produzido_internamente;
-  });
+  const unidadeAtual = unidadeFiltro === 'Todas' ? null : unidadeDe(unidadeFiltro);
+  const unidadesDoAjuste = unidadeFiltro === 'Todas' ? unidades : unidades.filter((u) => u.id === unidadeFiltro);
 
   return (
     <>
-      <TopBar titulo="Estoque de Insumos" />
-
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
-
-        .scroll-chips { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 12px; }
-        .scroll-chips::-webkit-scrollbar { display: none; }
-        
-        .chip { padding: 8px 16px; white-space: nowrap; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
-        .chip.act { background: var(--gold); color: #000; font-weight: bold; border: none; }
-        .chip.inac { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
-
-        .dot-unidade { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-
-        .tabela-estoque { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 600px; }
-        .tabela-estoque th { padding: 16px 12px; font-weight: 500; color: var(--dim); border-bottom: 1px solid var(--line); }
-        .tabela-estoque td { padding: 16px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-
-        .modal-input { background: var(--bg); border: 1px solid var(--gold); color: var(--txt); border-radius: 4px; outline: none; padding: 6px; width: 100%; box-sizing: border-box; text-align: center; }
-        .btn-sm { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; white-space: nowrap; }
-        .btn-sm.gold { background: var(--gold); color: #000; }
-        .btn-sm.surf { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
-
-        .qtd-wrap { display: flex; gap: 4px; align-items: center; }
-        .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
-        
-        /* Flexbox para garantir que a tag fique ao lado do número */
-        .estoque-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .badge-status { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; display: inline-block; white-space: nowrap; }
-
-        .pad-l { padding-left: 20px !important; }
-        .pad-r { padding-right: 20px !important; text-align: right; }
-
-        @media (max-width: 768px) {
-          .tabela-estoque { font-size: 11px; min-width: 100%; }
-          .tabela-estoque th, .tabela-estoque td { padding: 10px 4px; font-size: 11px; }
-          .hide-mobile { display: none !important; } /* Apenas Custo Médio será ocultado no celular */
-          .modal-input { padding: 6px 2px; font-size: 11px; }
-          .btn-sm { padding: 8px 6px; font-size: 10px; }
-          
-          .qtd-wrap { flex-direction: column; align-items: stretch; gap: 2px; }
-          .action-cell { flex-direction: column; align-items: stretch; gap: 6px; }
-          
-          .badge-status { font-size: 10px; padding: 2px 6px; }
-
-          .pad-l { padding-left: 8px !important; }
-          .pad-r { padding-right: 8px !important; }
-        }
-      `}} />
-
-      <div className="wrap">
-        <div className="lbl" style={{ marginBottom: '16px' }}>Visão Geral do Estoque</div>
-
-        {/* FILTROS */}
-        <div className="scroll-chips">
-          <button onClick={() => setUnidadeFiltro('Todas')} className={`chip ${unidadeFiltro === 'Todas' ? 'act' : 'inac'}`}>
-            Todas
-          </button>
-          {unidades.map(u => (
-            <button key={u.id} onClick={() => setUnidadeFiltro(u.id)} className={`chip ${unidadeFiltro === u.id ? 'act' : 'inac'}`}>
-              <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)' }} />
+      <PageHeader titulo="Estoque" subtitulo={unidadeAtual ? `Unidade ${unidadeAtual.nome}` : 'Todas as unidades'}>
+        <div className="chips" role="group" aria-label="Filtrar por unidade">
+          <button className={'chip' + (unidadeFiltro === 'Todas' ? ' act' : '')} onClick={() => setUnidadeFiltro('Todas')}>Todas</button>
+          {unidades.map((u) => (
+            <button key={u.id} className={'chip' + (unidadeFiltro === u.id ? ' act' : '')} onClick={() => setUnidadeFiltro(u.id)}>
+              <span className="ud" style={{ background: u.cor || 'var(--gold)' }} />
               {u.nome}
             </button>
           ))}
         </div>
+      </PageHeader>
 
-        <div className="scroll-chips" style={{ marginBottom: '24px' }}>
-          <button onClick={() => setTipoFiltro('Brutos')} className={`chip ${tipoFiltro === 'Brutos' ? 'act' : 'inac'}`}>
-            Insumos Brutos
-          </button>
-          <button onClick={() => setTipoFiltro('Preparos')} className={`chip ${tipoFiltro === 'Preparos' ? 'act' : 'inac'}`}>
-            Preparos / Sub-receitas
-          </button>
+      <div className="pg">
+        <div className="resumo">
+          <div><span>Valor em estoque</span><b>{brl(valorTotal)}</b></div>
+          <div><span>Em alerta</span><b className={emAlerta ? 'r' : 'g'}>{emAlerta}</b></div>
+          <div><span>{tipo === 'preparos' ? 'Preparos' : 'Insumos'}</span><b>{linhas.length}</b></div>
         </div>
 
-        {carregando ? (
-          <div className="panel" style={{ padding: '24px', textAlign: 'center' }}>Carregando estoque...</div>
-        ) : (
-          <div className="panel custom-scroll" style={{ overflowX: 'auto', padding: 0 }}>
-            <table className="tabela-estoque">
-              <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <th className="pad-l">Insumo / Produto</th>
-                  <th>Estoque Atual</th>
-                  {/* Custo Médio fica oculto no mobile, mas Valor em Estoque continua visível */}
-                  <th className="hide-mobile">Custo Médio</th>
-                  <th>Valor em Estoque</th>
-                  <th className="pad-r">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ingredientesFiltrados.length === 0 ? (
-                  <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--dim)' }}>Nenhum insumo encontrado.</td></tr>
-                ) : (
-                  ingredientesFiltrados.map(ing => {
-                    const estoquesDoIngrediente = estoques.filter(e => e.ingrediente_id === ing.id);
-                    
-                    const qtdGeralTotal = estoquesDoIngrediente.reduce((acc, e) => acc + (Number(e.quantidade) || 0), 0);
-                    let qtdAtual = 0;
-
-                    if (unidadeFiltro === 'Todas') {
-                      qtdAtual = qtdGeralTotal;
-                    } else {
-                      const estUni = estoquesDoIngrediente.find(e => e.unidade_id === unidadeFiltro);
-                      if (estUni) qtdAtual = Number(estUni.quantidade);
-                    }
-
-                    const minimo = Number(ing.estoque_minimo || 0);
-                    let statusColor = '';
-                    let statusText = '';
-
-                    // Com uma unidade filtrada, o status é o daquela unidade
-                    if (qtdAtual <= 0) {
-                      statusColor = 'var(--red)';
-                      statusText = 'Esgotado';
-                    } else if (minimo > 0 && qtdAtual <= minimo) {
-                      statusColor = 'var(--gold)';
-                      statusText = 'Acabando';
-                    } else {
-                      statusColor = 'var(--grn)';
-                      statusText = 'Normal';
-                    }
-
-                    const custo = Number(ing.custo_medio || 0);
-                    const isEditing = editandoItemId === ing.id;
-
-                    return (
-                      <tr key={ing.id} style={{ background: isEditing ? 'rgba(255,255,255,0.05)' : 'transparent', transition: 'background 0.2s' }}>
-                        
-                        {/* COLUNA NOME */}
-                        <td className="pad-l" style={{ color: 'var(--txt)' }}>
-                          <b style={{ fontSize: 13, display: 'block' }}>{ing.nome}</b>
-                        </td>
-
-                        {/* COLUNA ESTOQUE E STATUS */}
-                        <td style={{ color: 'var(--txt)' }}>
-                          {isEditing ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                              {unidadeFiltro === 'Todas' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                  {unidades.map(u => (
-                                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)' }} />
-                                      <span style={{ fontSize: '11px', color: 'var(--txt)', minWidth: '50px' }}>{u.nome}:</span>
-                                      <input type="text" className="modal-input" value={editQtdsUnidades[u.id] || '0'} onChange={(e) => setEditQtdsUnidades({ ...editQtdsUnidades, [u.id]: e.target.value })} style={{ width: '50px' }} />
-                                      <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editQtd} onChange={(e) => setEditQtd(e.target.value)} autoFocus style={{ width: '60px' }} />
-                                  <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
-                                </div>
-                              )}
-
-                              <div style={{ paddingTop: '8px', borderTop: '1px dashed var(--line)' }}>
-                                <span style={{ fontSize: '11px', color: 'var(--gold)', display: 'block', marginBottom: '4px' }}>Alerta de Mínimo:</span>
-                                <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editMinimo} onChange={(e) => setEditMinimo(e.target.value)} style={{ width: '60px', borderColor: 'var(--dim)' }} placeholder="Ex: 5" />
-                                  <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{ing.unidade_medida}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div className="estoque-info">
-                                <span style={{ fontWeight: 'bold', fontSize: '13px' }}>
-                                  {num(qtdAtual, 3)} <span style={{ fontSize: '10px', color: 'var(--dim)', fontWeight: 'normal' }}>{ing.unidade_medida}</span>
-                                </span>
-                                
-                                {statusText && (
-                                  <span className="badge-status" style={{ border: `1px solid ${statusColor}`, color: statusColor, background: 'rgba(255,255,255,0.05)' }}>
-                                    {statusText}
-                                  </span>
-                                )}
-                              </div>
-                              
-                              <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
-                                {unidadeFiltro === 'Todas' ? (
-                                  estoquesDoIngrediente.map(est => {
-                                    const u = unidades.find(uni => uni.id === est.unidade_id);
-                                    if (!u || Number(est.quantidade) <= 0) return null;
-                                    return (
-                                      <span key={est.unidade_id} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', background: 'var(--surf)', padding: '2px 6px', borderRadius: '12px', border: '1px solid var(--line)', whiteSpace: 'nowrap' }}>
-                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)', width: '6px', height: '6px' }} />
-                                        <b style={{ color: 'var(--txt)' }}>{u.nome}:</b> {num(est.quantidade, 2)} {ing.unidade_medida}
-                                      </span>
-                                    );
-                                  })
-                                ) : (
-                                  (() => {
-                                    const u = unidades.find(uni => uni.id === unidadeFiltro);
-                                    return u ? (
-                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', background: 'var(--surf)', padding: '2px 6px', borderRadius: '12px', border: '1px solid var(--line)' }}>
-                                        <span className="dot-unidade" style={{ background: u.cor || 'var(--gold)', width: '6px', height: '6px' }} />
-                                        {u.nome}
-                                      </span>
-                                    ) : null;
-                                  })()
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </td>
-
-                        {/* CUSTO MÉDIO (Oculto no celular) */}
-                        <td className="hide-mobile" style={{ color: 'var(--dim)' }}>
-                          {brl(custo)}
-                        </td>
-                        
-                        {/* VALOR EM ESTOQUE (Visível no celular) */}
-                        <td style={{ color: 'var(--txt)', fontWeight: 'bold' }}>
-                          {brl(qtdAtual * custo)}
-                        </td>
-
-                        <td className="pad-r" style={{ verticalAlign: 'top' }}>
-                          <div className="action-cell">
-                            {isEditing ? (
-                              <>
-                                <button onClick={() => salvarAjuste(ing.id)} disabled={salvando} className="btn-sm gold">
-                                  {salvando ? '...' : 'Salvar'}
-                                </button>
-                                <button onClick={() => setEditandoItemId(null)} className="btn-sm surf">✕</button>
-                              </>
-                            ) : (
-                              <button onClick={() => iniciarEdicao(ing, qtdAtual)} className="btn-sm surf">Ajustar</button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        <div className="filtros">
+          <div className="seg" role="tablist">
+            <button role="tab" aria-selected={tipo === 'insumos'} className={tipo === 'insumos' ? 'act' : ''} onClick={() => setTipo('insumos')}>
+              <IcoEstoque size={16} /> Insumos
+            </button>
+            <button role="tab" aria-selected={tipo === 'preparos'} className={tipo === 'preparos' ? 'act' : ''} onClick={() => setTipo('preparos')}>
+              <IcoPreparos size={16} /> Preparos
+            </button>
           </div>
-        )}
+          <label className="busca">
+            <IcoBusca size={17} />
+            <input className="inp" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar insumo…" aria-label="Buscar insumo" />
+          </label>
+        </div>
+
+        <div className="lista">
+          {carregando ? (
+            <div className="vazio">Carregando estoque…</div>
+          ) : linhas.length === 0 ? (
+            <div className="vazio">{busca ? `Nada encontrado para "${busca}".` : tipo === 'preparos' ? 'Nenhum preparo cadastrado ainda.' : 'Nenhum insumo cadastrado ainda. Eles aparecem aqui ao registrar compras.'}</div>
+          ) : (
+            linhas.map(({ ing, doIngrediente, qtdAtual, minimo, status, valor }) => (
+              <button key={ing.id} className="item" onClick={() => abrirAjuste(ing)}>
+                <div className="item-main">
+                  <div className="item-tit">
+                    {ing.nome}
+                    <span className={'tag ' + STATUS[status].tag}>{STATUS[status].txt}</span>
+                  </div>
+                  <div className="item-sub">
+                    {brl(Number(ing.custo_medio || 0))} / {ing.unidade_medida}
+                    {minimo > 0 && <> · mínimo {qtd(minimo)} {ing.unidade_medida}</>}
+                  </div>
+                  {unidadeFiltro === 'Todas' && doIngrediente.some((e) => Number(e.quantidade) > 0) && (
+                    <div className="pilulas">
+                      {doIngrediente.filter((e) => Number(e.quantidade) > 0).map((e) => {
+                        const u = unidadeDe(e.unidade_id);
+                        return u ? (
+                          <span key={e.unidade_id} className="pilula">
+                            <span className="ud" style={{ background: u.cor || 'var(--gold)' }} />
+                            {u.nome} <b>{qtd(Number(e.quantidade))}</b>
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="item-dir">
+                  <div className="item-val" style={{ color: status === 'esgotado' ? 'var(--red)' : status === 'acabando' ? 'var(--gold)' : undefined }}>
+                    {qtd(qtdAtual)}<small>{ing.unidade_medida}</small>
+                  </div>
+                  <div className="item-mini">{brl(valor)}</div>
+                </div>
+                <IcoSeta size={16} className="item-chev" />
+              </button>
+            ))
+          )}
+        </div>
       </div>
+
+      <Sheet
+        aberto={!!ajustando}
+        titulo="Ajustar estoque"
+        subtitulo={ajustando ? `${ajustando.nome} · em ${ajustando.unidade_medida}` : ''}
+        onFechar={() => setAjustando(null)}
+        rodape={
+          <>
+            <button className="bt bt-sec" onClick={() => setAjustando(null)}>Cancelar</button>
+            <button className="bt bt-prim" onClick={salvarAjuste} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>
+          </>
+        }
+      >
+        {ajustando && (
+          <>
+            <div className="sheet-sec">Quantidade contada</div>
+            {unidadesDoAjuste.map((u) => (
+              <div className="field" key={u.id}>
+                <label htmlFor={'q-' + u.id}>
+                  <span className="ud-inline" style={{ background: u.cor || 'var(--gold)' }} /> {u.nome}
+                </label>
+                <div className="inp-un">
+                  <input id={'q-' + u.id} inputMode="decimal" value={editQtds[u.id] ?? ''} onChange={(e) => setEditQtds({ ...editQtds, [u.id]: e.target.value })} />
+                  <span>{ajustando.unidade_medida}</span>
+                </div>
+              </div>
+            ))}
+            <div className="sheet-sec" style={{ marginTop: 18 }}>Alerta</div>
+            <div className="field">
+              <label htmlFor="minimo">Avisar quando ficar abaixo de</label>
+              <div className="inp-un">
+                <input id="minimo" inputMode="decimal" value={editMinimo} onChange={(e) => setEditMinimo(e.target.value)} placeholder="Ex: 5" />
+                <span>{ajustando.unidade_medida}</span>
+              </div>
+              <p className="dica">O mesmo mínimo vale para todas as unidades. Deixe 0 para não avisar.</p>
+            </div>
+          </>
+        )}
+      </Sheet>
     </>
   );
 }

@@ -1,12 +1,17 @@
-import TopBar from '@/components/TopBar';
-import CompraForm from '@/components/CompraForm';
-import ImportarNotaForm from '@/components/ImportarNotaForm'; 
-import { IcoNota } from '@/components/Icons';
-import { createClient } from '@/lib/supabase/server';
-import { brl, num } from '@/lib/format';
+import { Suspense } from 'react';
 import Link from 'next/link';
+import PageHeader from '@/components/PageHeader';
+import UnitSwitcher from '@/components/UnitSwitcher';
+import CompraForm from '@/components/CompraForm';
+import ImportarNotaForm from '@/components/ImportarNotaForm';
+import { IcoAjuste, IcoNota } from '@/components/Icons';
+import { createClient } from '@/lib/supabase/server';
+import { brl } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
+
+/** Quantidade sem zeros sobrando: 14, 0,42, 1,5 */
+const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 
 export default async function Compras({ searchParams }: { searchParams: Promise<{ u?: string; modo?: string }> }) {
   const { u, modo } = await searchParams;
@@ -18,15 +23,14 @@ export default async function Compras({ searchParams }: { searchParams: Promise<
   ]);
 
   const alvo = (unidades || []).find((x) => x.codigo === u);
-
-  // Verifica qual aba está ativa (manual ou ocr)
-  const modoAtual = modo || 'manual';
+  const modoAtual = modo === 'ocr' ? 'ocr' : 'manual';
+  const link = (m: string) => (alvo ? `?u=${alvo.codigo}&modo=${m}` : `?modo=${m}`);
 
   let rq = supabase
     .from('compras')
     .select('*, ingredientes(nome, unidade_medida), unidades(nome, codigo, cor), fornecedores(nome)')
     .order('criado_em', { ascending: false })
-    .limit(12);
+    .limit(15);
   if (alvo) rq = rq.eq('unidade_id', alvo.id);
   const { data: recentes } = await rq;
 
@@ -34,26 +38,25 @@ export default async function Compras({ searchParams }: { searchParams: Promise<
 
   return (
     <>
-      <TopBar titulo={alvo ? `Compras — ${alvo.nome}` : 'Registrar compra'}/>
+      <PageHeader titulo="Compras" subtitulo="Cada compra soma ao estoque e atualiza o custo médio">
+        <Suspense fallback={<div className="useg" />}>
+          <UnitSwitcher unidades={unidades || []} />
+        </Suspense>
+      </PageHeader>
 
-      <div className="wrap">
-        {/* Container Flexbox à prova de falhas: Quebra a linha no celular automaticamente */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'flex-start' }}>
-          
-          {/* SEÇÃO DA ESQUERDA (FORMULÁRIO): Forçamos ela a ser a maior (flex 60%) */}
-          <section style={{ flex: '1 1 60%', minWidth: '320px' }}>
-            
-            {/* ABAS DE NAVEGAÇÃO */}
-            <div className="useg" style={{ marginBottom: 15, justifyContent: 'flex-start', padding: 0 }}>
-              <Link href={alvo ? `?u=${alvo.codigo}&modo=manual` : `?modo=manual`}>
-                <button className={modoAtual === 'manual' ? 'act' : ''}>Mão</button>
+      <div className="pg">
+        <div className="duas-col">
+          <section>
+            <div className="seg" role="tablist" style={{ marginBottom: 14 }}>
+              <Link href={link('manual')} role="tab" aria-selected={modoAtual === 'manual'} className={modoAtual === 'manual' ? 'act' : ''}>
+                <IcoAjuste size={16} /> Manual
               </Link>
-              <Link href={alvo ? `?u=${alvo.codigo}&modo=ocr` : `?modo=ocr`}>
-                <button className={modoAtual === 'ocr' ? 'act' : ''}>Nota Fiscal (IA)</button>
+              <Link href={link('ocr')} role="tab" aria-selected={modoAtual === 'ocr'} className={modoAtual === 'ocr' ? 'act' : ''}>
+                <IcoNota size={16} /> Nota fiscal (IA)
               </Link>
             </div>
 
-            <div className="panel sticky">
+            <div className="panel">
               <div className="panel-body">
                 {modoAtual === 'manual' ? (
                   <CompraForm
@@ -63,53 +66,42 @@ export default async function Compras({ searchParams }: { searchParams: Promise<
                     unidadeInicial={alvo?.id}
                   />
                 ) : (
-                  <ImportarNotaForm 
-                    unidades={unidades || []}
-                    ingredientes={ingredientes || []}
-                  />
+                  <ImportarNotaForm unidades={unidades || []} ingredientes={ingredientes || []} unidadeInicial={alvo?.id} />
                 )}
               </div>
             </div>
           </section>
 
-          {/* SEÇÃO DA DIREITA (LISTA): Forçamos ela a ser a menor (flex 30%) */}
-          <section style={{ flex: '1 1 30%', minWidth: '320px' }}>
+          <section>
             <div className="lbl">Últimas compras</div>
-            <div className="panel">
-              <div className="sh">
-                <div className="si"><IcoNota size={20} /></div>
-                <div>
-                  <div className="sv">{brl(total)}</div>
-                  <div className="sl">{(recentes || []).length} últimos lançamentos</div>
-                </div>
+            <div className="lista">
+              <div className="lista-cab">
+                <span>{(recentes || []).length} lançamentos{alvo ? ` · ${alvo.nome}` : ''}</span>
+                <b style={{ color: 'var(--txt)' }}>{brl(total)}</b>
               </div>
-
               {(recentes || []).map((c: any) => (
-                <div className="al" key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
-                  {/* Bolinha colorida da unidade */}
-                  <span className="adot" style={{ width: '10px', height: '10px', borderRadius: '50%', background: c.unidades?.cor || 'var(--gold)', flexShrink: 0 }} />
-                  
-                  <div className="ab" style={{ flex: 1, minWidth: 0 }}>
-                    <b style={{ display: 'block', color: 'var(--txt)', fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {c.ingredientes?.nome}
-                    </b>
-                    <span style={{ display: 'block', color: 'var(--dim)', fontSize: '12px' }}>
-                      {num(c.quantidade, 2)} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}
-                    </span>
+                <div className="item" key={c.id}>
+                  <span className="item-ic" style={{ background: 'transparent', border: '1px solid var(--line)' }}>
+                    <span className="ud-inline" style={{ background: c.unidades?.cor || 'var(--gold)', margin: 0, width: 10, height: 10 }} />
+                  </span>
+                  <div className="item-main">
+                    <div className="item-tit">{c.ingredientes?.nome || '—'}</div>
+                    <div className="item-sub">
+                      {qtd(Number(c.quantidade))} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}
+                      {c.origem === 'nota_fiscal' && <> · <span style={{ color: 'var(--gold)' }}>nota fiscal</span></>}
+                    </div>
                   </div>
-
-                  <div className="ar" style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div className="aq" style={{ color: 'var(--gold)', fontWeight: 'bold', fontSize: '14px' }}>{brl(c.total)}</div>
-                    <div className="au" style={{ fontSize: '11px', color: 'var(--dim)' }}>
-                      {c.unidades?.nome || '—'} · {c.data_compra ? c.data_compra.split('-').reverse().join('/') : ''}
+                  <div className="item-dir">
+                    <div className="item-val" style={{ fontSize: 17 }}>{brl(Number(c.total))}</div>
+                    <div className="item-mini">
+                      {c.unidades?.nome || '—'} · {c.data_compra ? c.data_compra.split('-').reverse().slice(0, 2).join('/') : ''}
                     </div>
                   </div>
                 </div>
               ))}
-              {(!recentes || recentes.length === 0) && <div className="vazio" style={{ padding: '24px', textAlign: 'center' }}>Nenhuma compra registrada.</div>}
+              {(!recentes || recentes.length === 0) && <div className="vazio">Nenhuma compra registrada ainda.</div>}
             </div>
           </section>
-          
         </div>
       </div>
     </>

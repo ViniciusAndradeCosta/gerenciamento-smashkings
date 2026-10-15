@@ -1,47 +1,21 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import TopBar from '@/components/TopBar';
+import { useState, useEffect, useMemo } from 'react';
+import PageHeader from '@/components/PageHeader';
+import Sheet from '@/components/Sheet';
+import { avisar } from '@/components/Toaster';
+import { IcoBusca, IcoLixo, IcoMais, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl, num } from '@/lib/format';
+import { CATEGORIAS } from '@/lib/categorias';
 
-type Produto = {
-  id: string;
-  nome: string;
-  preco_venda: number;
-  custo_fixo?: number;
-  custo_extra?: number;
-  custo_salao?: number;
-  categoria?: string | null;
-  ativo: boolean;
-};
+type Produto = { id: string; nome: string; preco_venda: number; custo_fixo?: number; custo_extra?: number; categoria?: string | null; ativo: boolean };
+type Ingrediente = { id: string; nome: string; unidade_medida: string; custo_medio: number };
+type FichaItem = { id: string; produto_id: string; ingrediente_id: string; quantidade: number; ingredientes?: Ingrediente };
 
-type Ingrediente = {
-  id: string;
-  nome: string;
-  unidade_medida: string;
-  custo_medio: number;
-};
-
-type FichaItem = {
-  id: string;
-  produto_id: string;
-  ingrediente_id: string;
-  quantidade: number;
-  ingredientes?: Ingrediente;
-};
-
-const CATEGORIAS = [
-  'Burguer Simples',
-  'Burguer Duplo',
-  'Burguer Triplo',
-  'Burguer Alto',
-  'Burguer do mês',
-  'Veggies',
-  'Molho Adicional',
-  'Acompanhamentos',
-  'Milkshakes'
-];
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
+const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
+const custoFixoDe = (p: Produto) => Number(p.custo_fixo ?? p.custo_extra ?? 1.5);
 
 export default function FichasPage() {
   const supabase = createClient();
@@ -49,22 +23,16 @@ export default function FichasPage() {
   const [ingredientes, setIngredientes] = useState<Ingrediente[]>([]);
   const [fichas, setFichas] = useState<FichaItem[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [filtro, setFiltro] = useState('Todos');
+  const [busca, setBusca] = useState('');
 
-  // Estado do Filtro
-  const [filtroCategoria, setFiltroCategoria] = useState('Todos');
-
-  // Estados do Modal
-  const [produtoModal, setProdutoModal] = useState<Produto | null>(null);
-  const [ingredienteBusca, setIngredienteBusca] = useState(''); // Estado alterado para busca por texto
-  const [quantidadeInput, setQuantidadeInput] = useState('');
+  const [aberto, setAberto] = useState<Produto | null>(null);
+  const [novoInsumo, setNovoInsumo] = useState('');
+  const [novaQtd, setNovaQtd] = useState('');
+  const [qtds, setQtds] = useState<Record<string, string>>({});
   const [salvandoItem, setSalvandoItem] = useState(false);
 
-  // Estados de Edição Inline (na tabela do modal)
-  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
-  const [editQtd, setEditQtd] = useState('');
-
   async function carregarDados() {
-    setCarregando(true);
     const [resProd, resIng, resFichas, resCusto] = await Promise.all([
       supabase.from('produtos').select('*').order('nome'),
       supabase.from('ingredientes').select('*').order('nome'),
@@ -78,307 +46,217 @@ export default function FichasPage() {
     const ings: Ingrediente[] = (resIng.data || []).map((i) => ({ ...i, custo_medio: custoDe.get(i.id) ?? i.custo_medio }));
 
     if (resProd.data) setProdutos(resProd.data);
-    if (resIng.data) setIngredientes(ings);
-    if (resFichas.data && resIng.data) {
-      setFichas(resFichas.data.map((item) => ({
-        ...item, ingredientes: ings.find((ing) => ing.id === item.ingrediente_id),
-      })));
+    setIngredientes(ings);
+    if (resFichas.data) {
+      const itens = resFichas.data.map((item) => ({ ...item, ingredientes: ings.find((ing) => ing.id === item.ingrediente_id) }));
+      setFichas(itens);
+      setQtds(Object.fromEntries(itens.map((i) => [i.id, qtd(Number(i.quantidade)).replace(/\./g, '')])));
     }
     setCarregando(false);
   }
 
   useEffect(() => { carregarDados(); }, []);
 
-  async function handleAdicionarIngrediente(e: React.FormEvent) {
-    e.preventDefault();
-    if (!produtoModal || !ingredienteBusca || !quantidadeInput) return;
-
-    // Busca o ID do insumo com base no nome digitado
-    const ingEncontrado = ingredientes.find(i => i.nome.toLowerCase() === ingredienteBusca.toLowerCase());
-    
-    if (!ingEncontrado) {
-      alert('Por favor, selecione um insumo válido da lista.');
-      return;
+  // custos de cada produto já calculados
+  const custos = useMemo(() => {
+    const m = new Map<string, { insumos: number; fixo: number; total: number; cmv: number; margem: number; itens: number }>();
+    for (const p of produtos) {
+      const itens = fichas.filter((f) => f.produto_id === p.id);
+      const insumos = itens.reduce((s, i) => s + Number(i.quantidade) * Number(i.ingredientes?.custo_medio || 0), 0);
+      const fixo = custoFixoDe(p);
+      const total = insumos + fixo;
+      const preco = Number(p.preco_venda || 0);
+      m.set(p.id, { insumos, fixo, total, cmv: preco > 0 ? (total / preco) * 100 : 0, margem: preco > 0 ? ((preco - total) / preco) * 100 : 0, itens: itens.length });
     }
+    return m;
+  }, [produtos, fichas]);
+
+  const lista = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return produtos.filter((p) => {
+      if (termo && !p.nome.toLowerCase().includes(termo)) return false;
+      if (filtro === 'Todos') return true;
+      if (filtro === 'Sem ficha') return (custos.get(p.id)?.itens || 0) === 0;
+      return p.categoria === filtro;
+    });
+  }, [produtos, filtro, busca, custos]);
+
+  const semFicha = produtos.filter((p) => (custos.get(p.id)?.itens || 0) === 0).length;
+  const comPreco = produtos.filter((p) => Number(p.preco_venda) > 0 && (custos.get(p.id)?.itens || 0) > 0);
+  const cmvMedio = comPreco.length ? comPreco.reduce((s, p) => s + (custos.get(p.id)?.cmv || 0), 0) / comPreco.length : 0;
+
+  async function adicionarInsumo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!aberto) return;
+    const ing = ingredientes.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+    if (!ing) return avisar('Escolha um insumo da lista.', 'erro');
+    const quantidade = paraNumero(novaQtd);
+    if (!(quantidade > 0)) return avisar('Informe a quantidade usada.', 'erro');
 
     setSalvandoItem(true);
-    const { error } = await supabase.from('ficha_itens').insert({
-      produto_id: produtoModal.id, 
-      ingrediente_id: ingEncontrado.id, 
-      quantidade: Number(quantidadeInput.replace(',', '.'))
-    });
-
-    if (!error) { 
-      setIngredienteBusca(''); 
-      setQuantidadeInput(''); 
-      await carregarDados(); 
-    } else { 
-      alert('Erro: ' + error.message); 
-    }
-    
+    const { error } = await supabase.from('ficha_itens').insert({ produto_id: aberto.id, ingrediente_id: ing.id, quantidade });
     setSalvandoItem(false);
-  }
-
-  async function handleRemoverIngrediente(idItem: string) {
-    if (!confirm('Remover ingrediente da ficha?')) return;
-    const { error } = await supabase.from('ficha_itens').delete().eq('id', idItem);
-    if (error) alert('Erro ao remover: ' + error.message);
+    if (error) return avisar('Erro ao adicionar: ' + error.message, 'erro');
+    setNovoInsumo('');
+    setNovaQtd('');
     carregarDados();
   }
 
-  async function handleSalvarEdicao(idItem: string) {
-    const qtdNum = Number(editQtd.replace(',', '.'));
-    if (isNaN(qtdNum) || qtdNum <= 0) {
-      alert('Quantidade inválida.');
-      return;
+  async function salvarQtd(item: FichaItem) {
+    const valor = paraNumero(qtds[item.id] || '');
+    if (valor === Number(item.quantidade)) return;
+    if (!(valor > 0)) {
+      avisar('Quantidade inválida.', 'erro');
+      return setQtds({ ...qtds, [item.id]: qtd(Number(item.quantidade)) });
     }
-    
-    const { error } = await supabase.from('ficha_itens').update({ quantidade: qtdNum }).eq('id', idItem);
-    
-    if (error) {
-      alert('Erro ao editar: ' + error.message);
-    } else {
-      setEditandoItemId(null);
-      await carregarDados();
-    }
+    const { error } = await supabase.from('ficha_itens').update({ quantidade: valor }).eq('id', item.id);
+    if (error) return avisar('Erro ao editar: ' + error.message, 'erro');
+    avisar('Quantidade atualizada.');
+    carregarDados();
   }
 
-  function iniciarEdicao(item: FichaItem) {
-    setEditandoItemId(item.id);
-    setEditQtd(String(item.quantidade).replace('.', ','));
+  async function removerItem(item: FichaItem) {
+    if (!confirm(`Remover ${item.ingredientes?.nome || 'este insumo'} da ficha?`)) return;
+    const { error } = await supabase.from('ficha_itens').delete().eq('id', item.id);
+    if (error) return avisar('Erro ao remover: ' + error.message, 'erro');
+    carregarDados();
   }
 
-  // Filtra os produtos com base na categoria selecionada
-  const produtosFiltrados = produtos.filter(prod => {
-    if (filtroCategoria === 'Todos') return true;
-    if (filtroCategoria === 'Sem Categoria') return !prod.categoria || prod.categoria.trim() === '';
-    return prod.categoria === filtroCategoria;
-  });
+  const c = aberto ? custos.get(aberto.id) : undefined;
+  const itensAbertos = aberto ? fichas.filter((f) => f.produto_id === aberto.id).sort((a, b) => (a.ingredientes?.nome || '').localeCompare(b.ingredientes?.nome || '', 'pt-BR')) : [];
+  const corCmv = (cmv: number) => (cmv <= 0 ? 'n' : cmv <= 35 ? 'g' : cmv <= 45 ? 'o' : 'r');
 
   return (
     <>
-      <TopBar titulo="Fichas Técnicas dos Produtos" />
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
-        
-        .scroll-chips { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 16px; }
-        .scroll-chips::-webkit-scrollbar { height: 4px; }
-        .scroll-chips::-webkit-scrollbar-track { background: transparent; }
-        .scroll-chips::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
-        
-        .chip { padding: 8px 16px; white-space: nowrap; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
-        .chip.act { background: var(--gold); color: #000; font-weight: bold; border: none; }
-        .chip.inac { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
+      <PageHeader titulo="Fichas técnicas" subtitulo="Custo, CMV e margem de cada produto" />
 
-        .tabela-fichas { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; min-width: 700px; }
-        .tabela-fichas th { padding: 16px 12px; font-weight: 500; color: var(--dim); border-bottom: 1px solid var(--line); }
-        .tabela-fichas td { padding: 16px 12px; border-bottom: 1px solid var(--line); }
-        .btn-ficha { padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; display: inline-block; white-space: nowrap; }
-        
-        .modal-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        .modal-table th { padding: 12px; color: var(--dim); border-bottom: 1px solid var(--line); font-weight: normal; }
-        .modal-table td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--txt); vertical-align: middle; }
-        .modal-input { background: var(--bg); border: 1px solid var(--gold); color: var(--txt); border-radius: 4px; outline: none; padding: 6px; width: 100%; box-sizing: border-box; text-align: center; }
-        .btn-sm { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; }
-        .btn-sm.gold { background: var(--gold); color: #000; }
-        .btn-sm.surf { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
-        .btn-sm.red { background: var(--rdim); color: var(--red); }
-        
-        .qtd-wrap { display: flex; gap: 4px; align-items: center; }
-        .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
-
-        @media (max-width: 768px) {
-          .tabela-fichas { font-size: 12px; }
-          .tabela-fichas th, .tabela-fichas td { padding: 12px 6px; font-size: 11px; }
-          .hide-mobile { display: none; }
-          
-          .modal-table { font-size: 11px; }
-          .modal-table th, .modal-table td { padding: 8px 4px; }
-          .modal-input { padding: 6px 2px; font-size: 11px; }
-          .btn-sm { padding: 6px 4px; font-size: 10px; flex: 1; text-align: center; }
-          .qtd-wrap { flex-direction: column; align-items: stretch; gap: 2px; }
-          .action-cell { flex-direction: column; align-items: stretch; gap: 4px; }
-        }
-      `}} />
-
-      <div className="wrap">
-        <div className="lbl" style={{ marginBottom: '16px' }}>Engenharia de Cardápio e Custos</div>
-
-        <div className="scroll-chips">
-          {['Todos', ...CATEGORIAS, 'Sem Categoria'].map((cat) => (
-            <button key={cat} onClick={() => setFiltroCategoria(cat)} className={`chip ${filtroCategoria === cat ? 'act' : 'inac'}`}>
-              {cat}
-            </button>
-          ))}
+      <div className="pg">
+        <div className="resumo">
+          <div><span>Produtos</span><b>{produtos.length}</b></div>
+          <div><span>Sem ficha</span><b className={semFicha ? 'o' : 'g'}>{semFicha}</b></div>
+          <div><span>CMV médio</span><b className={corCmv(cmvMedio)}>{cmvMedio ? `${num(cmvMedio, 1)}%` : '—'}</b></div>
         </div>
 
-        {carregando ? ( <div className="panel" style={{ padding: '24px', textAlign: 'center' }}>Carregando...</div> ) : (
-          <div className="panel custom-scroll" style={{ overflowX: 'auto', padding: 0 }}>
-            <table className="tabela-fichas">
-              <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.02)' }}>
-                  <th style={{ paddingLeft: '20px' }}>Produto</th>
-                  <th>Preço Venda</th>
-                  <th>Custo Insumos</th>
-                  <th>Custo Fixo</th>
-                  <th>Custo Total</th>
-                  <th>Margem / CMV</th>
-                  <th style={{ paddingRight: '20px', textAlign: 'right' }}>Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {produtosFiltrados.map((prod) => {
-                  const itensDoProduto = fichas.filter((f) => f.produto_id === prod.id);
-                  const custoInsumos = itensDoProduto.reduce((acc, item) => acc + (item.quantidade * Number(item.ingredientes?.custo_medio || 0)), 0);
-                  
-                  const custoFixo = Number(prod.custo_fixo ?? prod.custo_extra ?? prod.custo_salao ?? 1.50);
-                  const custoTotal = custoInsumos + custoFixo;
-                  
-                  const pVenda = Number(prod.preco_venda || 0);
-                  const lucro = pVenda - custoTotal;
-                  const cmvPercent = pVenda > 0 ? (custoTotal / pVenda) * 100 : 0;
-                  const margemPercent = pVenda > 0 ? (lucro / pVenda) * 100 : 0;
-
-                  return (
-                    <tr key={prod.id} onClick={() => setProdutoModal(prod)} style={{ cursor: 'pointer', borderLeft: itensDoProduto.length > 0 ? '4px solid var(--grn)' : '4px solid var(--gold)' }}>
-                      <td style={{ paddingLeft: '20px', color: 'var(--txt)' }}>
-                        <b style={{ fontSize: 15, display: 'block' }}>{prod.nome}</b>
-                        {prod.categoria && <span style={{ fontSize: 11, color: 'var(--dim)' }}>{prod.categoria}</span>}
-                      </td>
-                      <td style={{ color: 'var(--gold)', fontWeight: 'bold' }}>{brl(pVenda)}</td>
-                      <td style={{ color: 'var(--txt)' }}>{brl(custoInsumos)}</td>
-                      <td style={{ color: 'var(--dim)' }}>{brl(custoFixo)}</td>
-                      <td style={{ color: 'var(--txt)', fontWeight: 'bold' }}>{brl(custoTotal)}</td>
-                      <td>
-                        {pVenda > 0 ? (
-                          <div>
-                            <span style={{ color: margemPercent >= 50 ? 'var(--grn)' : 'var(--gold)', fontWeight: 'bold', fontSize: 13 }}>{num(margemPercent, 1)}% margem</span>
-                            <span style={{ display: 'block', fontSize: 11, color: 'var(--dim)' }}>CMV: {num(cmvPercent, 1)}%</span>
-                          </div>
-                        ) : ( <span style={{ fontSize: 12, color: 'var(--dim)' }}>—</span> )}
-                      </td>
-                      <td style={{ paddingRight: '20px', textAlign: 'right' }}>
-                        {itensDoProduto.length > 0 ? <span className="btn-ficha" style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'var(--grn)' }}>Ver</span> : <span className="btn-ficha" style={{ background: 'var(--rdim)', color: 'var(--red)' }}>⚠️ Montar</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <div className="filtros">
+          <label className="busca">
+            <IcoBusca size={17} />
+            <input className="inp" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar produto…" aria-label="Buscar produto" />
+          </label>
+          <div className="chips" role="group" aria-label="Filtrar">
+            <button className={'chip' + (filtro === 'Todos' ? ' act' : '')} onClick={() => setFiltro('Todos')}>Todos</button>
+            {semFicha > 0 && (
+              <button className={'chip' + (filtro === 'Sem ficha' ? ' act' : '')} onClick={() => setFiltro('Sem ficha')}>
+                Sem ficha <span className="n">{semFicha}</span>
+              </button>
+            )}
+            {CATEGORIAS.filter((cat) => produtos.some((p) => p.categoria === cat)).map((cat) => (
+              <button key={cat} className={'chip' + (filtro === cat ? ' act' : '')} onClick={() => setFiltro(cat)}>{cat}</button>
+            ))}
           </div>
-        )}
+        </div>
+
+        <div className="lista">
+          {carregando ? (
+            <div className="vazio">Carregando fichas…</div>
+          ) : lista.length === 0 ? (
+            <div className="vazio">{produtos.length === 0 ? 'Cadastre produtos na tela Produtos para montar as fichas.' : 'Nenhum produto nesse filtro.'}</div>
+          ) : (
+            lista.map((p) => {
+              const cp = custos.get(p.id)!;
+              return (
+                <button key={p.id} className={'item' + (p.ativo ? '' : ' off')} onClick={() => setAberto(p)}>
+                  <div className="item-main">
+                    <div className="item-tit">
+                      {p.nome}
+                      {cp.itens === 0 && <span className="tag o">Sem ficha</span>}
+                    </div>
+                    <div className="item-sub">
+                      Venda {brl(p.preco_venda)} · custo {brl(cp.total)}
+                    </div>
+                  </div>
+                  <div className="item-dir">
+                    {/* sem ficha o custo é só o fixo: um CMV baixo aqui enganaria */}
+                    {cp.itens === 0 ? (
+                      <div className="item-val" style={{ color: 'var(--mut2)' }}>—</div>
+                    ) : Number(p.preco_venda) > 0 ? (
+                      <>
+                        <span className={'tag ' + corCmv(cp.cmv)}>CMV {num(cp.cmv, 1)}%</span>
+                        <div className="item-mini">margem {num(cp.margem, 0)}%</div>
+                      </>
+                    ) : <span className="tag n">sem preço</span>}
+                  </div>
+                  <IcoSeta size={16} className="item-chev" />
+                </button>
+              );
+            })
+          )}
+        </div>
       </div>
 
-      {/* MODAL DETALHES FICHA */}
-      {produtoModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="panel custom-scroll" style={{ width: '100%', maxWidth: '650px', padding: '24px', borderRadius: '12px', background: 'var(--bg)', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-              <div>
-                <h3 style={{ margin: 0, color: 'var(--txt)', fontSize: '20px' }}>Ficha Técnica</h3>
-                <div style={{ color: 'var(--gold)', fontSize: '16px', fontWeight: 'bold', marginTop: '4px' }}>{produtoModal.nome}</div>
-              </div>
-              <button onClick={() => { setProdutoModal(null); setEditandoItemId(null); }} style={{ background: 'none', border: 'none', color: 'var(--dim)', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+      <Sheet
+        aberto={!!aberto}
+        titulo="Ficha técnica"
+        subtitulo={aberto ? `${aberto.nome}${aberto.categoria ? ' · ' + aberto.categoria : ''}` : ''}
+        onFechar={() => setAberto(null)}
+      >
+        {aberto && c && (
+          <>
+            <div className="resumo">
+              <div><span>Preço de venda</span><b className="o">{brl(aberto.preco_venda)}</b></div>
+              <div><span>Custo total</span><b>{brl(c.total)}</b></div>
+              <div><span>CMV · margem</span><b className={corCmv(c.cmv)}>{Number(aberto.preco_venda) > 0 ? `${num(c.cmv, 0)}% · ${num(c.margem, 0)}%` : '—'}</b></div>
             </div>
 
-            <div style={{ background: 'var(--surf)', padding: '16px', borderRadius: '8px', marginBottom: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-              <div><span style={{ fontSize: '11px', color: 'var(--dim)', display: 'block' }}>Preço Venda</span><b style={{ fontSize: '16px', color: 'var(--gold)' }}>{brl(produtoModal.preco_venda)}</b></div>
-              <div><span style={{ fontSize: '11px', color: 'var(--dim)', display: 'block' }}>Custo Fixo</span><b style={{ fontSize: '16px', color: 'var(--txt)' }}>{brl(produtoModal.custo_fixo ?? produtoModal.custo_extra ?? produtoModal.custo_salao ?? 1.50)}</b></div>
-              <div><span style={{ fontSize: '11px', color: 'var(--dim)', display: 'block' }}>Categoria</span><b style={{ fontSize: '14px', color: 'var(--txt)' }}>{produtoModal.categoria || 'Geral'}</b></div>
-            </div>
-
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '14px', color: 'var(--dim)', marginBottom: '12px', fontWeight: 'bold' }}>Composição do Produto</div>
-              <div style={{ background: 'var(--surf)', borderRadius: '8px', border: '1px solid var(--line)' }}>
-                <table className="modal-table">
-                  <thead>
-                    <tr>
-                      <th>Insumo</th>
-                      <th>Qtd Uso</th>
-                      <th className="hide-mobile">Custo UND</th>
-                      <th>Total</th>
-                      <th style={{ textAlign: 'right' }}>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fichas.filter((f) => f.produto_id === produtoModal.id).length === 0 ? (
-                       <tr><td colSpan={5} style={{ padding: '20px', textAlign: 'center', color: 'var(--gold)' }}>Nenhum insumo vinculado a este produto.</td></tr>
-                    ) : (
-                      fichas.filter((f) => f.produto_id === produtoModal.id).map((item) => {
-                        const cUnd = Number(item.ingredientes?.custo_medio || 0);
-                        const isEditing = editandoItemId === item.id;
-
-                        return (
-                          <tr key={item.id} style={{ background: isEditing ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
-                            <td>{item.ingredientes?.nome}</td>
-                            
-                            <td>
-                              {isEditing ? (
-                                <div className="qtd-wrap">
-                                  <input type="text" className="modal-input" value={editQtd} onChange={(e) => setEditQtd(e.target.value)} autoFocus />
-                                  <span style={{ fontSize: '11px', color: 'var(--dim)' }}>{item.ingredientes?.unidade_medida}</span>
-                                </div>
-                              ) : (
-                                <span>{num(item.quantidade, 3)} <span style={{ fontSize: '10px', color: 'var(--dim)' }}>{item.ingredientes?.unidade_medida}</span></span>
-                              )}
-                            </td>
-
-                            <td className="hide-mobile">{brl(cUnd)}</td>
-                            <td style={{ fontWeight: 'bold' }}>{brl(item.quantidade * cUnd)}</td>
-                            
-                            <td>
-                              <div className="action-cell">
-                                {isEditing ? (
-                                  <>
-                                    <button onClick={() => handleSalvarEdicao(item.id)} className="btn-sm gold">Salvar</button>
-                                    <button onClick={() => setEditandoItemId(null)} className="btn-sm surf">✕</button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button onClick={() => iniciarEdicao(item)} className="btn-sm surf">Editar</button>
-                                    <button onClick={() => handleRemoverIngrediente(item.id)} className="btn-sm red">Apagar</button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+            <div className="sheet-sec">Composição</div>
+            <div className="comp">
+              {itensAbertos.length === 0 && <div className="vazio">Nenhum insumo ainda. Adicione abaixo.</div>}
+              {itensAbertos.map((item) => {
+                const custoUn = Number(item.ingredientes?.custo_medio || 0);
+                return (
+                  <div className="comp-l" key={item.id}>
+                    <div className="item-main">
+                      <b>{item.ingredientes?.nome || '—'}</b>
+                      <span>{brl(custoUn)} / {item.ingredientes?.unidade_medida}</span>
+                    </div>
+                    <div className="comp-q inp-un">
+                      <input
+                        className="inp" inputMode="decimal" aria-label={`Quantidade de ${item.ingredientes?.nome}`}
+                        value={qtds[item.id] ?? ''} onChange={(e) => setQtds({ ...qtds, [item.id]: e.target.value })}
+                        onBlur={() => salvarQtd(item)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                      />
+                    </div>
+                    <div className="comp-c">{brl(Number(item.quantidade) * custoUn)}</div>
+                    <button className="bt bt-ic bt-sm bt-ghost" onClick={() => removerItem(item)} aria-label={`Remover ${item.ingredientes?.nome}`}>
+                      <IcoLixo size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+              <div className="comp-l comp-tot">
+                <div className="item-main"><span>Insumos {brl(c.insumos)} + custo fixo {brl(c.fixo)}</span></div>
+                <div className="comp-c">{brl(c.total)}</div>
               </div>
             </div>
 
-            <form onSubmit={handleAdicionarIngrediente} style={{ borderTop: '1px solid var(--line)', paddingTop: '20px', display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-              <div style={{ flex: 2 }}>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Insumo</label>
-                {/* CAMPO DE BUSCA E SELEÇÃO INTELIGENTE (DATALIST) */}
-                <input 
-                  list="lista-fichas-ingredientes" 
-                  value={ingredienteBusca} 
-                  onChange={(e) => setIngredienteBusca(e.target.value)} 
-                  placeholder="Digite ou selecione..."
-                  style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }} 
-                  required 
-                />
+            <div className="sheet-sec">Adicionar insumo</div>
+            <form className="add-linha" onSubmit={adicionarInsumo}>
+              <div className="field">
+                <input list="lista-fichas-ingredientes" value={novoInsumo} onChange={(e) => setNovoInsumo(e.target.value)} placeholder="Insumo ou preparo" aria-label="Insumo" autoComplete="off" />
                 <datalist id="lista-fichas-ingredientes">
-                  {ingredientes.map((ing) => (
-                    <option key={ing.id} value={ing.nome} />
-                  ))}
+                  {ingredientes.map((ing) => <option key={ing.id} value={ing.nome} />)}
                 </datalist>
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', fontSize: '12px', color: 'var(--dim)', marginBottom: 6 }}>Qtd</label>
-                <input type="text" value={quantidadeInput} onChange={(e) => setQuantidadeInput(e.target.value)} style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px' }} required />
+              <div className="field">
+                <input inputMode="decimal" value={novaQtd} onChange={(e) => setNovaQtd(e.target.value)} placeholder="Qtd" aria-label="Quantidade" />
               </div>
-              <button type="submit" disabled={salvandoItem} style={{ padding: '12px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>+</button>
+              <button type="submit" className="bt bt-prim bt-ic" disabled={salvandoItem} aria-label="Adicionar insumo" style={{ height: 48, width: 48 }}>
+                <IcoMais size={20} />
+              </button>
             </form>
-          </div>
-        </div>
-      )}
+            <p className="dica">A quantidade é na medida do insumo (ex.: 0,05 para 50 g de um insumo em kg).</p>
+          </>
+        )}
+      </Sheet>
     </>
   );
 }

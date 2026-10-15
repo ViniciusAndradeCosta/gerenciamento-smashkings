@@ -17,7 +17,7 @@ export default function BrandRow({ sub }: { sub: string }) {
   }
   return (
     <div className="brand">
-      <Image className="bmark" src="/logo.png" alt="" width={40} height={40} priority />
+      <span className="blogo bmark"><Image src="/logo.png" alt="" width={84} height={84} priority /></span>
       <div>
         <div className="bn bmark">Smash Kings</div>
         <div className="bs">{sub}</div>

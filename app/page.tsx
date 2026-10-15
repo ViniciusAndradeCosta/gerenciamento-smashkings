@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { Suspense } from 'react';
 import Hero from '@/components/Hero';
-import TopBar from '@/components/TopBar';
+import PageHeader from '@/components/PageHeader';
 import UnitSwitcher from '@/components/UnitSwitcher';
-import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque } from '@/components/Icons';
+import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque, IcoNota, IcoFichas } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl, brlCurto, num, pct } from '@/lib/format';
 import { hoje, ontem, inicioDoMes, saudacao } from '@/lib/date';
@@ -23,9 +23,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   if (perfil?.papel !== 'admin' && perfil?.papel !== 'gerente') {
     return (
       <>
-        <TopBar titulo="Acesso pendente" />
-        <div className="wrap">
-          <div className="lbl">Conta aguardando liberação</div>
+        <PageHeader titulo="Acesso pendente" subtitulo="Conta aguardando liberação" />
+        <div className="pg">
           <div className="panel">
             <div className="panel-body nota">
               Sua conta <strong>{user?.email}</strong> foi criada, mas ainda não tem acesso aos dados.
@@ -109,6 +108,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       </Suspense>
 
       <div className="wrap">
+        <div className="lbl">Atalhos</div>
+        <nav className="atalhos" aria-label="Atalhos">
+          <Link href="/compras" className="atalho"><span><IcoCompras size={21} /></span>Nova compra</Link>
+          <Link href="/compras?modo=ocr" className="atalho"><span><IcoNota size={21} /></span>Ler nota</Link>
+          <Link href={linkEstoque} className="atalho"><span><IcoEstoque size={21} /></span>Estoque</Link>
+          <Link href="/fichas" className="atalho"><span><IcoFichas size={21} /></span>Fichas</Link>
+        </nav>
+
         <div className="lbl">Resumo do dia</div>
         <div className="krow">
           <div className="kc">

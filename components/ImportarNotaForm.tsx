@@ -1,10 +1,17 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { brl, num } from '@/lib/format';
+import { avisar } from './Toaster';
+import { IcoCamera, IcoArquivo, IcoLixo, IcoNota } from './Icons';
+import { brl } from '@/lib/format';
 
 type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string };
-type ItemNF = { id_temp: string; nome: string; quantidade: number; preco_total: number; unidade_medida: string; ingrediente_id?: string };
+// quantidade e preço ficam como texto enquanto a pessoa edita (aceita vírgula)
+type ItemNF = { id_temp: string; nome: string; quantidade: string; preco_total: string; unidade_medida: string };
+
+const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
+const paraTexto = (n: number) => String(n ?? '').replace('.', ',');
 
 // A Vercel recusa requisições acima de ~4,5 MB, e foto de celular passa disso
 // fácil. Reduz a imagem para no máximo 2000px (sobra nitidez para ler a nota).
@@ -27,45 +34,39 @@ async function prepararArquivo(file: File): Promise<File> {
 }
 
 export default function ImportarNotaForm({
-  unidades, ingredientes
+  unidades, ingredientes, unidadeInicial,
 }: {
-  unidades: Opt[]; ingredientes: Opt[];
+  unidades: Opt[]; ingredientes: Opt[]; unidadeInicial?: string;
 }) {
+  const router = useRouter();
   const [arquivo, setArquivo] = useState<File | null>(null);
-  const [itensExtraidos, setItensExtraidos] = useState<ItemNF[]>([]);
-  const [carregando, setCarregando] = useState(false);
-  
-  const [unidadeSelecionada, setUnidadeSelecionada] = useState('');
-
-  // --- ESTADOS PARA EDIÇÃO INLINE DA NOTA FISCAL ---
-  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
-  const [editNome, setEditNome] = useState('');
-  const [editQtd, setEditQtd] = useState('');
-  const [editPreco, setEditPreco] = useState('');
-  const [editUnidade, setEditUnidade] = useState('');
+  const [itens, setItens] = useState<ItemNF[]>([]);
+  const [lendo, setLendo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [unidadeSelecionada, setUnidadeSelecionada] = useState(unidadeInicial || '');
 
   useEffect(() => {
     if (unidades.length > 0 && !unidadeSelecionada) {
-      const unidadePadrao = unidades.find(u => u.codigo === 'producao' || u.codigo === 'geral' || u.nome.toLowerCase().includes('produção'));
-      setUnidadeSelecionada(unidadePadrao ? unidadePadrao.id : unidades[0].id);
+      const padrao = unidades.find((u) => u.codigo === 'producao' || u.codigo === 'geral' || u.nome.toLowerCase().includes('produção'));
+      setUnidadeSelecionada(padrao ? padrao.id : unidades[0].id);
     }
   }, [unidades, unidadeSelecionada]);
 
   async function extrairDados(e: React.FormEvent) {
     e.preventDefault();
     if (!arquivo) return;
-    
-    setCarregando(true);
+
+    setLendo(true);
     const envio = await prepararArquivo(arquivo);
     if (envio.size > LIMITE_BYTES) {
-      alert('Arquivo muito grande (máx. 4 MB). Tire uma foto ou envie um PDF menor.');
-      setCarregando(false);
+      avisar('Arquivo muito grande (máx. 4 MB). Tire uma foto ou envie um PDF menor.', 'erro');
+      setLendo(false);
       return;
     }
     const formData = new FormData();
     formData.append('file', envio);
 
-    // --- BLINDAGEM DE IA (Enviando instrução estrita para o backend) ---
+    // --- BLINDAGEM DE IA (instrução estrita para o backend) ---
     const regraIA = `REGRA CRÍTICA DE EXTRAÇÃO: Ignore nomes de marcas (ex: Vitapão, Sadia, Heinz, Liza), pesos, medidas (ex: 1kg, 500g, 2L, 900ml) e numerações de lote. Extraia e retorne EXCLUSIVAMENTE o nome genérico, limpo e culinário do insumo. Exemplo: Se ler "ACUCAR MASCAVO VITAPAO 1KG", retorne APENAS "Açúcar Mascavo". Formate usando a primeira letra maiúscula em cada palavra.`;
     formData.append('instrucoes_extras', regraIA);
 
@@ -73,9 +74,9 @@ export default function ImportarNotaForm({
       const res = await fetch('/api/extrair-nf', { method: 'POST', body: formData });
       // Erros da plataforma (ex.: 413, 504) chegam como texto, não JSON
       const corpo = await res.text();
-      let dadosIA: any;
+      let dados: any;
       try {
-        dadosIA = JSON.parse(corpo);
+        dados = JSON.parse(corpo);
       } catch {
         throw new Error(
           res.status === 413 ? 'Arquivo muito grande para enviar.'
@@ -83,343 +84,165 @@ export default function ImportarNotaForm({
           : `Resposta inesperada do servidor (${res.status}).`
         );
       }
+      if (!res.ok || dados.error) throw new Error(dados.error || 'Falha na comunicação com o servidor');
 
-      if (!res.ok || dadosIA.error) {
-        throw new Error(dadosIA.error || 'Falha na comunicação com o servidor');
-      }
-      
-      // Limpeza preventiva no frontend caso a IA falhe e envie pesos no final (ex: "Açúcar Mascavo 1kg")
-      dadosIA = dadosIA.map((item: ItemNF) => {
-        let nomeLimpo = item.nome;
-        // Expressão regular que remove menções de peso ou volume perdidas no final do nome do ingrediente
-        nomeLimpo = nomeLimpo.replace(/\s+\d+(,\d+)?\s*(kg|g|ml|l|mg|un|cx|pcte|pacote)s?$/i, '');
-        return { ...item, nome: nomeLimpo.trim() };
-      });
-
-      setItensExtraidos(dadosIA);
+      // Limpeza caso a IA mande pesos no fim do nome (ex: "Açúcar Mascavo 1kg")
+      const lidos: ItemNF[] = dados.map((item: any) => ({
+        id_temp: item.id_temp,
+        nome: String(item.nome).replace(/\s+\d+(,\d+)?\s*(kg|g|ml|l|mg|un|cx|pcte|pacote)s?$/i, '').trim(),
+        quantidade: paraTexto(item.quantidade),
+        preco_total: paraTexto(item.preco_total),
+        unidade_medida: item.unidade_medida || 'UN',
+      }));
+      if (!lidos.length) throw new Error('Não encontrei itens nessa nota. Tente uma foto mais nítida.');
+      setItens(lidos);
+      avisar(`${lidos.length} ${lidos.length === 1 ? 'item lido' : 'itens lidos'}. Confira antes de salvar.`);
     } catch (error: any) {
-      alert("Motivo do erro: " + error.message);
-      console.error(error);
+      avisar(error.message, 'erro');
     } finally {
-      setCarregando(false);
+      setLendo(false);
     }
   }
 
-  function removerItem(id_temp: string) {
-    if (!confirm('Deseja remover este item da lista de importação?')) return;
-    setItensExtraidos(itensExtraidos.filter(item => item.id_temp !== id_temp));
-  }
-
-  // --- FUNÇÕES DE EDIÇÃO DA TABELA ---
-  function iniciarEdicaoItem(item: ItemNF) {
-    setEditandoItemId(item.id_temp);
-    setEditNome(item.nome);
-    setEditQtd(String(item.quantidade).replace('.', ','));
-    setEditPreco(String(item.preco_total).replace('.', ','));
-    setEditUnidade(item.unidade_medida || 'UN');
-  }
-
-  function salvarEdicaoItem(id_temp: string) {
-    const qtdNum = Number(editQtd.replace(',', '.'));
-    const precoNum = Number(editPreco.replace(',', '.'));
-
-    if (!editNome.trim() || isNaN(qtdNum) || isNaN(precoNum)) {
-      alert('Por favor, preencha os campos com valores numéricos válidos.');
-      return;
-    }
-
-    const novaLista = itensExtraidos.map(item => {
-      if (item.id_temp === id_temp) {
-        return { 
-          ...item, 
-          nome: editNome.trim(), 
-          quantidade: qtdNum, 
-          preco_total: precoNum,
-          unidade_medida: editUnidade.trim().toUpperCase() 
-        };
-      }
-      return item;
-    });
-
-    setItensExtraidos(novaLista);
-    setEditandoItemId(null);
-  }
+  const mudar = (id: string, campo: keyof ItemNF, valor: string) =>
+    setItens((lista) => lista.map((i) => (i.id_temp === id ? { ...i, [campo]: valor } : i)));
+  const remover = (id: string) => setItens((lista) => lista.filter((i) => i.id_temp !== id));
+  const totalNota = itens.reduce((s, i) => s + (paraNumero(i.preco_total) || 0), 0);
 
   async function salvarNoBanco() {
-    setCarregando(true);
+    const invalido = itens.find((i) => !i.nome.trim() || !(paraNumero(i.quantidade) > 0) || isNaN(paraNumero(i.preco_total)));
+    if (invalido) return avisar(`Confira o item "${invalido.nome || 'sem nome'}": nome, quantidade e preço.`, 'erro');
+
+    setSalvando(true);
     const supabase = createClient();
-    let quantidadeErros = 0;
+    let erros = 0;
     // Insumos criados nesta importação: se a nota tiver duas linhas do mesmo
     // produto novo, a segunda reaproveita o cadastro em vez de duplicar.
     const criados = new Map<string, string>();
 
-    for (const item of itensExtraidos) {
-      let idDoIngrediente = null;
+    for (const item of itens) {
       const chave = item.nome.toLowerCase().trim();
+      const quantidade = paraNumero(item.quantidade);
+      let idDoIngrediente = ingredientes.find((ing) => ing.nome.toLowerCase().trim() === chave)?.id || criados.get(chave) || null;
 
-      if (!(Number(item.quantidade) > 0)) {
-        console.error(`Quantidade inválida no item ${item.nome}`);
-        quantidadeErros++;
-        continue;
-      }
-
-      const ingredienteExistente = ingredientes.find(
-        (ing) => ing.nome.toLowerCase().trim() === chave
-      );
-
-      if (ingredienteExistente) {
-        idDoIngrediente = ingredienteExistente.id;
-      } else if (criados.has(chave)) {
-        idDoIngrediente = criados.get(chave)!;
-      } else {
-        const { data: novoIngrediente, error: erroCriarIngrediente } = await supabase
+      if (!idDoIngrediente) {
+        const { data: novo, error } = await supabase
           .from('ingredientes')
-          .insert({
-            nome: item.nome, 
-            unidade_medida: item.unidade_medida || 'UN',
-            ativo: true
-          })
+          .insert({ nome: item.nome.trim(), unidade_medida: item.unidade_medida || 'UN', ativo: true })
           .select('id')
-          .single(); 
-
-        if (erroCriarIngrediente) {
-          console.error(`Erro ao criar o ingrediente ${item.nome}:`, erroCriarIngrediente);
-          quantidadeErros++;
-          continue; 
-        }
-        
-        idDoIngrediente = novoIngrediente.id;
-        criados.set(chave, novoIngrediente.id);
+          .single();
+        if (error) { console.error(`Erro ao criar o insumo ${item.nome}:`, error); erros++; continue; }
+        idDoIngrediente = novo.id;
+        criados.set(chave, novo.id);
       }
 
-      const precoUnitarioCalculado = item.preco_total / (item.quantidade || 1);
-
-      const { error: erroCompra } = await supabase
-        .from('compras')
-        .insert({
-          unidade_id: unidadeSelecionada,
-          ingrediente_id: idDoIngrediente,
-          quantidade: item.quantidade,
-          preco_unitario: precoUnitarioCalculado,
-          origem: 'nota_fiscal'
-        });
-
-      if (erroCompra) {
-        console.error(`Erro ao salvar a compra do item ${item.nome}:`, erroCompra);
-        quantidadeErros++;
-      }
+      const { error: erroCompra } = await supabase.from('compras').insert({
+        unidade_id: unidadeSelecionada,
+        ingrediente_id: idDoIngrediente,
+        quantidade,
+        preco_unitario: paraNumero(item.preco_total) / quantidade,
+        origem: 'nota_fiscal',
+      });
+      if (erroCompra) { console.error(`Erro ao salvar a compra de ${item.nome}:`, erroCompra); erros++; }
     }
-    
-    setCarregando(false);
-    
-    if (quantidadeErros > 0) {
-      alert(`Processo concluído, mas houve erro em ${quantidadeErros} itens. Verifique o console.`);
+
+    setSalvando(false);
+    if (erros > 0) {
+      avisar(`Salvo, mas ${erros} ${erros === 1 ? 'item deu' : 'itens deram'} erro. Confira as últimas compras.`, 'erro');
     } else {
-      alert("Todos os ingredientes e compras foram registrados com sucesso!");
-      setItensExtraidos([]); 
+      avisar('Todos os itens da nota foram lançados no estoque.');
+      setItens([]);
       setArquivo(null);
-      window.location.reload(); 
     }
+    router.refresh();
   }
 
-  return (
-    <div>
-      {/* Estilos Responsivos para fazer a tabela caber na tela do celular */}
-      <style dangerouslySetInnerHTML={{__html: `
-        .nf-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        .nf-table th { padding: 12px; color: var(--dim); border-bottom: 1px solid var(--line); font-weight: normal; }
-        .nf-table td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--txt); }
-        
-        /* Inputs de Edição */
-        .nf-input { background: var(--bg); border: 1px solid var(--gold); color: var(--txt); border-radius: 4px; outline: none; padding: 8px; width: 100%; box-sizing: border-box; }
-        
-        /* Botões de Ação da Tabela */
-        .btn-nf { padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 12px; margin-right: 6px; }
-        .btn-nf.gold { background: var(--gold); color: #000; }
-        .btn-nf.surf { background: var(--surf); color: var(--txt); border: 1px solid var(--line); }
-        .btn-nf.red { background: var(--rdim); color: var(--red); margin-right: 0; }
-        
-        .qtd-wrap { display: flex; gap: 4px; align-items: center; }
-
-        /* Ajustes para Celular (telas menores que 768px) */
-        @media (max-width: 768px) {
-          .nf-table { font-size: 11px; }
-          .nf-table th, .nf-table td { padding: 8px 4px; }
-          .nf-input { padding: 6px 4px; font-size: 11px; }
-          .btn-nf { padding: 6px 6px; font-size: 10px; margin-right: 4px; }
-          .hide-mobile { display: none; }
-          
-          /* No celular, coloca o Input de Qtd e Unidade um debaixo do outro pra não estourar a tela */
-          .qtd-wrap { flex-direction: column; align-items: stretch; gap: 2px; }
-        }
-      `}} />
-
-      {itensExtraidos.length === 0 && (
-        <form onSubmit={extrairDados} className="field">
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontSize: 14, color: 'var(--txt)' }}>
-              Para qual estoque essa nota será lançada?
-            </label>
-            <select 
-              value={unidadeSelecionada} 
-              onChange={(e) => setUnidadeSelecionada(e.target.value)}
-              style={{ width: '100%', padding: '12px', background: 'var(--surf)', border: '1px solid var(--line)', color: 'var(--txt)', borderRadius: '8px', outline: 'none' }}
-            >
-              {unidades.map(u => (
-                <option key={u.id} value={u.id}>{u.nome}</option>
-              ))}
-            </select>
+  // ---------- etapa 2: revisar itens lidos ----------
+  if (itens.length > 0) {
+    return (
+      <div>
+        <div className="nf-cab">
+          <div>
+            <b>{itens.length} {itens.length === 1 ? 'item' : 'itens'} lidos</b>
+            <span>Confira e corrija antes de lançar em {unidades.find((u) => u.id === unidadeSelecionada)?.nome}</span>
           </div>
-
-          <label>Como deseja enviar a nota fiscal?</label>
-          
-          <div style={{ display: 'flex', gap: 10, marginTop: 10, marginBottom: 15 }}>
-            <label className="btn" style={{ flex: 1, textAlign: 'center', cursor: 'pointer', background: 'var(--surf)', border: '1px solid var(--line)', padding: '12px 0' }}>
-              📷 Tirar Foto
-              <input 
-                type="file" 
-                accept="image/*"
-                capture="environment" 
-                onChange={(e) => setArquivo(e.target.files?.[0] || null)} 
-                style={{ display: 'none' }}
-              />
-            </label>
-
-            <label className="btn" style={{ flex: 1, textAlign: 'center', cursor: 'pointer', background: 'var(--surf)', border: '1px solid var(--line)', padding: '12px 0' }}>
-              📁 Arquivo
-              <input 
-                type="file" 
-                accept="image/*,.pdf" 
-                onChange={(e) => setArquivo(e.target.files?.[0] || null)} 
-                style={{ display: 'none' }}
-              />
-            </label>
-          </div>
-
-          {arquivo && (
-            <div style={{ marginBottom: 15, fontSize: 14, color: 'var(--gold)', textAlign: 'center' }}>
-              ✅ Selecionado: {arquivo.name === 'image.jpg' ? 'Foto da câmera' : arquivo.name}
-            </div>
-          )}
-
-          <button type="submit" className="btn prim" disabled={carregando || !arquivo} style={{ width: '100%' }}>
-            {carregando ? 'Lendo nota com IA (Aguarde)...' : 'Extrair Produtos'}
-          </button>
-        </form>
-      )}
-
-      {itensExtraidos.length > 0 && (
-        <div style={{ marginTop: 15 }}>
-          <div className="lbl" style={{ margin: '0 0 10px 0' }}>Revise os itens lidos ({itensExtraidos.length})</div>
-          
-          <div style={{ background: 'var(--surf)', borderRadius: '8px', border: '1px solid var(--line)' }}>
-            <table className="nf-table">
-              <thead>
-                <tr>
-                  <th>Produto Extraído</th>
-                  <th>Qtd</th>
-                  <th>Preço<span className="hide-mobile"> (R$)</span></th>
-                  <th style={{ textAlign: 'right' }}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {itensExtraidos.map((item) => {
-                  const isEditing = editandoItemId === item.id_temp;
-
-                  return (
-                    <tr key={item.id_temp} style={{ background: isEditing ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
-                      
-                      {/* NOME DO PRODUTO */}
-                      <td>
-                        {isEditing ? (
-                          <input 
-                            type="text" 
-                            className="nf-input"
-                            value={editNome} 
-                            onChange={(e) => setEditNome(e.target.value)} 
-                            autoFocus 
-                          />
-                        ) : (
-                          <b>{item.nome}</b>
-                        )}
-                      </td>
-                      
-                      {/* QUANTIDADE E UNIDADE DE MEDIDA */}
-                      <td>
-                        {isEditing ? (
-                          <div className="qtd-wrap">
-                            <input 
-                              type="text" 
-                              className="nf-input"
-                              value={editQtd} 
-                              onChange={(e) => setEditQtd(e.target.value)} 
-                              style={{ textAlign: 'center' }} 
-                            />
-                            <input 
-                              type="text" 
-                              className="nf-input"
-                              value={editUnidade} 
-                              onChange={(e) => setEditUnidade(e.target.value)} 
-                              placeholder="UN"
-                              style={{ textAlign: 'center' }} 
-                            />
-                          </div>
-                        ) : (
-                          <span>{num(item.quantidade, 2)} <span style={{fontSize: '10px', color: 'var(--dim)'}}>{item.unidade_medida}</span></span>
-                        )}
-                      </td>
-
-                      {/* PREÇO TOTAL */}
-                      <td>
-                        {isEditing ? (
-                          <input 
-                            type="text" 
-                            className="nf-input"
-                            value={editPreco} 
-                            onChange={(e) => setEditPreco(e.target.value)} 
-                          />
-                        ) : (
-                          <span style={{ fontWeight: 'bold' }}>{brl(item.preco_total)}</span>
-                        )}
-                      </td>
-                      
-                      {/* BOTÕES DE AÇÃO */}
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {isEditing ? (
-                          <>
-                            <button onClick={() => salvarEdicaoItem(item.id_temp)} className="btn-nf gold">Salvar</button>
-                            <button onClick={() => setEditandoItemId(null)} className="btn-nf surf" style={{ marginRight: 0 }}>✕</button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={() => iniciarEdicaoItem(item)} className="btn-nf surf">Editar</button>
-                            <button onClick={() => removerItem(item.id_temp)} className="btn-nf red">Remover</button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          
-          <button 
-            onClick={salvarNoBanco} 
-            className="btn prim" 
-            disabled={carregando || editandoItemId !== null} 
-            style={{ marginTop: 15, width: '100%', opacity: editandoItemId !== null ? 0.5 : 1 }}
-          >
-            {carregando ? 'Salvando no Estoque...' : 'Confirmar e Salvar Tudo'}
-          </button>
-
-          {editandoItemId !== null && (
-            <div style={{ fontSize: '12px', color: 'var(--gold)', textAlign: 'center', marginTop: '8px' }}>
-              ⚠️ Salve o item que está editando para poder finalizar a importação.
-            </div>
-          )}
+          <b className="nf-total">{brl(totalNota)}</b>
         </div>
-      )}
-    </div>
+
+        <div className="nf-itens">
+          {itens.map((item) => (
+            <div key={item.id_temp} className="nf-item">
+              <div className="nf-linha">
+                <input className="inp" value={item.nome} onChange={(e) => mudar(item.id_temp, 'nome', e.target.value)} aria-label="Nome do insumo" />
+                <button type="button" className="bt bt-ic bt-perigo" onClick={() => remover(item.id_temp)} aria-label={`Remover ${item.nome}`}>
+                  <IcoLixo size={17} />
+                </button>
+              </div>
+              <div className="nf-linha">
+                <label className="nf-mini">
+                  <span>Qtd</span>
+                  <input className="inp" inputMode="decimal" value={item.quantidade} onChange={(e) => mudar(item.id_temp, 'quantidade', e.target.value)} />
+                </label>
+                <label className="nf-mini">
+                  <span>Medida</span>
+                  <select className="inp" value={item.unidade_medida} onChange={(e) => mudar(item.id_temp, 'unidade_medida', e.target.value)}>
+                    {Array.from(new Set(['UN', 'KG', 'G', 'L', 'ML', item.unidade_medida])).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </label>
+                <label className="nf-mini">
+                  <span>Total R$</span>
+                  <input className="inp" inputMode="decimal" value={item.preco_total} onChange={(e) => mudar(item.id_temp, 'preco_total', e.target.value)} />
+                </label>
+              </div>
+              {ingredientes.some((ing) => ing.nome.toLowerCase().trim() === item.nome.toLowerCase().trim())
+                ? <p className="dica">Já cadastrado — soma ao estoque existente.</p>
+                : <p className="dica" style={{ color: 'var(--gold)' }}>Insumo novo — será cadastrado.</p>}
+            </div>
+          ))}
+        </div>
+
+        <div className="nf-acoes">
+          <button type="button" className="bt bt-sec" onClick={() => { setItens([]); setArquivo(null); }} disabled={salvando}>Descartar</button>
+          <button type="button" className="bt bt-prim" onClick={salvarNoBanco} disabled={salvando} style={{ flex: 1 }}>
+            {salvando ? 'Lançando no estoque…' : `Lançar ${itens.length} ${itens.length === 1 ? 'item' : 'itens'}`}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- etapa 1: enviar a nota ----------
+  return (
+    <form onSubmit={extrairDados}>
+      <div className="field">
+        <label htmlFor="nf-unidade">Lançar no estoque de</label>
+        <select id="nf-unidade" value={unidadeSelecionada} onChange={(e) => setUnidadeSelecionada(e.target.value)}>
+          {unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
+        </select>
+      </div>
+
+      <div className="field">
+        <label>Nota fiscal ou cupom</label>
+        <div className="nf-envio">
+          <label className="nf-botao">
+            <IcoCamera size={22} />
+            Tirar foto
+            <input type="file" accept="image/*" capture="environment" onChange={(e) => setArquivo(e.target.files?.[0] || null)} hidden />
+          </label>
+          <label className="nf-botao">
+            <IcoArquivo size={22} />
+            Escolher arquivo
+            <input type="file" accept="image/*,.pdf" onChange={(e) => setArquivo(e.target.files?.[0] || null)} hidden />
+          </label>
+        </div>
+        {arquivo
+          ? <p className="nf-arquivo"><IcoNota size={15} /> {arquivo.name === 'image.jpg' ? 'Foto da câmera' : arquivo.name}</p>
+          : <p className="dica">Foto nítida, com a lista de itens inteira. Também aceita PDF.</p>}
+      </div>
+
+      <button type="submit" className="btn prim" disabled={lendo || !arquivo}>
+        {lendo ? 'Lendo a nota com IA…' : 'Ler itens da nota'}
+      </button>
+    </form>
   );
 }

@@ -109,3 +109,33 @@ export const IcoChat = (p: IconProps) => (
 export const IcoEnviar = (p: IconProps) => (
   <Svg {...p}><path d="M4 12l16-8-6 16-3-6-7-2Z" /></Svg>
 );
+
+export const IcoBusca = (p: IconProps) => (
+  <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Svg>
+);
+
+export const IcoFechar = (p: IconProps) => <Svg sw={2.2} {...p}><path d="M6 6l12 12M18 6 6 18" /></Svg>;
+
+export const IcoSeta = (p: IconProps) => <Svg sw={2} {...p}><path d="m9 6 6 6-6 6" /></Svg>;
+
+export const IcoLixo = (p: IconProps) => (
+  <Svg {...p}><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6 7l1 13h10l1-13" /><path d="M9 7V4h6v3" /></Svg>
+);
+
+export const IcoCamera = (p: IconProps) => (
+  <Svg {...p}><path d="M4 8h3l2-3h6l2 3h3v11H4V8Z" /><circle cx="12" cy="13" r="3.5" /></Svg>
+);
+
+export const IcoArquivo = (p: IconProps) => (
+  <Svg {...p}><path d="M14 3H6v18h12V7l-4-4Z" /><path d="M14 3v4h4" /><path d="M9 13h6M9 17h4" /></Svg>
+);
+
+export const IcoGrade = (p: IconProps) => (
+  <Svg {...p}><rect x="4" y="4" width="6.5" height="6.5" rx="1.5" /><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" /><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" /><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" /></Svg>
+);
+
+export const IcoAjuste = (p: IconProps) => (
+  <Svg {...p}><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></Svg>
+);
+
+export const IcoOk = (p: IconProps) => <Svg sw={2.2} {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></Svg>;
