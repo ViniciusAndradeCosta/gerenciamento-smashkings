@@ -58,7 +58,7 @@ Rode o `schema.sql` atual no SQL Editor do projeto que vocês já usam. Ele é *
    npm run dev
    ```
 4. Abra http://localhost:3000 no navegador.
-5. Clique em **"Criar agora"**, cadastre seu e-mail e senha → a primeira conta entra como **admin**.
+5. Crie sua conta no Supabase (**Authentication → Users → Add user**, marcando **Auto Confirm User**) — a primeira conta entra como **admin** — e entre com ela.
 6. Teste: vá em **Compras**, registre uma compra → volte ao **Estoque** e veja a quantidade e o CMP atualizados automaticamente. 🎉
 
 ---
@@ -85,13 +85,14 @@ Você já tem GitHub e Vercel.
 ### Ajuste final no Supabase (para login funcionar no ar)
 1. Supabase → **Authentication** → **URL Configuration**.
 2. Em **Site URL**, coloque o link da Vercel (`https://smashkings.vercel.app`).
-3. Em **Redirect URLs**, adicione o mesmo link (o e-mail de confirmação de conta volta para ele).
+3. Em **Redirect URLs**, adicione o mesmo link seguido de `/**`.
 4. Salve.
 
-### Criar as contas e fechar o cadastro
-1. Abra o link da Vercel e crie **a sua** conta primeiro — a primeira conta do sistema vira **admin**.
-2. Peça para os gerentes criarem as contas deles. Elas entram como **pendentes** (veem só um aviso de "acesso pendente") até você liberar — veja "Como liberar o acesso" abaixo.
-3. Quando todo mundo tiver conta, desligue novos cadastros: Supabase → **Authentication** → **Sign In / Providers** → desmarque **Allow new users to sign up**. (Mesmo ligado, quem se cadastrar não vê nada sem liberação — mas fechar evita contas estranhas.)
+### Criar a conta e fechar o cadastro
+A tela de login do sistema só tem **Entrar** — as contas são criadas pelo painel do Supabase:
+1. Supabase → **Authentication** → **Users** → **Add user** → **Create new user**: e-mail, senha e marque **Auto Confirm User**.
+2. A primeira conta do sistema vira **admin** automaticamente. Confira em **Table Editor → `perfis`**.
+3. Desligue novos cadastros: **Authentication** → **Sign In / Providers** → desmarque **Allow new users to sign up**. Isso não impede o **Add user** do painel.
 
 ---
 
@@ -107,11 +108,10 @@ Você já tem GitHub e Vercel.
 ## Dúvidas comuns
 
 **"Preciso confirmar e-mail ao criar conta?"**
-Por padrão o Supabase pede confirmação por e-mail. Para testar mais rápido:
-Supabase → Authentication → Providers → Email → desligue **"Confirm email"**.
+Não, se você marcar **Auto Confirm User** ao criar a conta pelo painel (Authentication → Users → Add user).
 
-**"Como liberar o acesso de alguém?"**
-Supabase → **Table Editor** → tabela `perfis` → ache a pessoa pelo nome e edite o `papel`:
+**"Como dar acesso a mais alguém?"**
+Crie a conta em **Authentication → Users → Add user** (com **Auto Confirm User**). Contas criadas depois da primeira entram como `pendente`; depois vá em **Table Editor** → tabela `perfis` → ache a pessoa pelo nome e edite o `papel`:
 - `gerente` + `unidade_id` da unidade dele (copie o `id` da tabela `unidades`) → vê e lança só naquela unidade;
 - `admin` → vê e edita todas as unidades;
 - `pendente` → sem acesso (é como toda conta nova começa).

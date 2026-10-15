@@ -13,7 +13,7 @@ Sistema web **mobile-first** e **instalável no celular** (PWA) para gestão das
 - **Alertas:** itens abaixo do estoque mínimo aparecem no dashboard.
 - **Nota fiscal com IA:** foto ou PDF da nota → o Gemini lê os itens → você revisa e lança tudo como compra.
 - **Assistente (chat):** um **botão flutuante 🍔** em todas as telas abre um chat onde você pergunta em linguagem natural ("quanto vendi hoje?", "qual o CMV do mês?", "o que está acabando?") e o sistema responde com os números reais. Usa o Google Gemini (grátis); sem a chave configurada, cai num modo local que responde as perguntas comuns direto do banco.
-- **Login:** autenticação por e-mail/senha (Supabase Auth). O **primeiro** usuário vira admin; quem criar conta depois fica **pendente** (sem ver nada) até um admin liberar.
+- **Login:** autenticação por e-mail/senha (Supabase Auth). As contas são criadas pelo painel do Supabase (a tela do sistema só tem "Entrar"). A **primeira** conta vira admin; as seguintes ficam **pendentes** (sem ver nada) até um admin liberar.
 - **RLS:** gerente de unidade só enxerga a própria; admin vê tudo. As regras ficam no banco, não só na tela.
 
 ## Rodar em 4 passos
@@ -23,7 +23,7 @@ Veja o guia detalhado em **SETUP.md**. Resumo:
 1. Crie um projeto no Supabase e rode `supabase/schema.sql` no SQL Editor (o `seed.sql` é só para testes — não rode no banco de produção).
 2. Copie `.env.example` para `.env.local` e preencha `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY` (e, se quiser o chat e a leitura de nota com IA, a `GEMINI_API_KEY`).
 3. `npm install && npm run dev` → abra http://localhost:3000
-4. Crie sua conta na tela de login (a primeira vira admin) e comece a usar.
+4. Crie a conta no Supabase (Authentication → Users → Add user, com "Auto Confirm User") — a primeira vira admin — e entre no sistema.
 
 > **Já tem um banco em uso?** Rode o `schema.sql` atual mesmo assim: ele é idempotente, só cria o que falta e atualiza as regras de segurança, sem apagar dados. Detalhes no SETUP.md.
 

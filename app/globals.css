@@ -165,7 +165,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 /* ---------- formulário ---------- */
 .field{margin-bottom:13px}
 .field label{display:block;font-size:11.5px;color:var(--mut);font-weight:600;margin-bottom:7px}
-.field input,.field select{width:100%;background:var(--surf2);border:1px solid var(--line2);border-radius:12px;padding:13px 14px;color:var(--txt);font-size:15px;font-family:inherit;outline:none;-webkit-appearance:none;appearance:none}
+.field input,.field select{width:100%;background:var(--surf2);border:1px solid var(--line2);border-radius:12px;padding:13px 14px;color:var(--txt);font-size:16px;font-family:inherit;outline:none;-webkit-appearance:none;appearance:none}
 .field select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%238f8a7e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:38px}
 .field input:focus,.field select:focus{border-color:var(--gold)}
 .field input::placeholder{color:var(--mut2)}
@@ -178,12 +178,107 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .msg.ok{background:var(--ndim);border:1px solid rgba(121,224,160,.3);color:var(--grn)}
 
 /* ---------- login ---------- */
-.login{min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:28px}
-.login-box{width:100%;max-width:380px}
-.login-box img{width:78px;height:78px;border-radius:22px;display:block;margin:0 auto 18px}
-.login-h{text-align:center;font-family:var(--cond);font-size:30px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;line-height:1}
-.login-s{text-align:center;font-size:12.5px;color:var(--mut);margin:6px 0 26px}
-.login-alt{color:var(--gold);font-weight:600;text-align:center;display:block;margin:16px auto 0;font-size:13px}
+/* Pensado primeiro para o celular: faixa dourada com o logo no alto,
+   ocupando o espaço livre, e o formulário logo abaixo, na altura do
+   polegar — sem sobrar faixa vazia.
+   desktop (900px+): painel dourado à esquerda, formulário à direita. */
+.login{position:relative;min-height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+  background:radial-gradient(90% 38% at 50% 100%,rgba(247,201,21,.13),transparent 72%),var(--bg)}
+/* pontilhado dourado leve atrás do formulário */
+.login::before{content:"";position:absolute;left:0;right:0;bottom:0;height:52%;pointer-events:none;
+  background-image:radial-gradient(rgba(247,201,21,.17) 1px,transparent 1.6px);background-size:22px 22px;
+  -webkit-mask-image:linear-gradient(to top,#000 15%,transparent);mask-image:linear-gradient(to top,#000 15%,transparent)}
+.login-coroa{position:absolute;pointer-events:none;fill:currentColor;transform:rotate(var(--r,0deg));
+  animation:coroa-flutua var(--d,7s) ease-in-out var(--atraso,0s) infinite}
+
+.login-hero{position:relative;overflow:hidden;flex:1 0 auto;display:flex;flex-direction:column;justify-content:center;align-items:center;
+  background:var(--goldg);color:var(--ink);text-align:center;border-radius:0 0 32px 32px;
+  padding:calc(var(--safe-t) + 26px) 22px 30px}
+.login-hero::before,.login-hero::after{content:"";position:absolute;border-radius:50%;pointer-events:none}
+.login-hero::before{width:200px;height:200px;right:-66px;top:-78px;background:rgba(255,255,255,.17);animation:bolha 9s ease-in-out infinite}
+.login-hero::after{width:140px;height:140px;left:-54px;bottom:-60px;background:rgba(20,18,10,.07);animation:bolha 11s ease-in-out -4s infinite reverse}
+/* faixa de brilho que atravessa o dourado de tempos em tempos */
+.login-brilho{position:absolute;top:-20%;bottom:-20%;left:-40%;width:28%;pointer-events:none;transform:skewX(-18deg);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);animation:brilho 7s ease-in-out 1.2s infinite}
+.login-hero .cr-h1{width:46px;left:8%;top:calc(var(--safe-t) + 24px);color:rgba(20,18,10,.09);--r:-14deg;--d:7s}
+.login-hero .cr-h2{width:30px;right:11%;bottom:22px;color:rgba(20,18,10,.08);--r:12deg;--d:8.5s;--atraso:-3s}
+
+/* logo: entra crescendo, flutua devagar e tem um anel tracejado girando.
+   O PNG tem fundo branco fora do círculo — o recorte redondo esconde. */
+.login-logo{position:relative;z-index:1;flex:none;width:clamp(118px,21dvh,186px);aspect-ratio:1;margin-bottom:16px;
+  animation:logo-entra .7s cubic-bezier(.2,.8,.2,1) both,logo-flutua 5s ease-in-out .7s infinite}
+.login-logo::before{content:"";position:absolute;inset:-9px;border-radius:50%;border:2px dashed rgba(20,18,10,.28);animation:gira 40s linear infinite}
+.login-logo-img{position:absolute;inset:0;border-radius:50%;overflow:hidden;background:#000;box-shadow:0 12px 30px rgba(20,18,10,.35)}
+.login-logo-img img{position:absolute;left:50%;top:50%;width:106%;max-width:none;height:auto;transform:translate(-50%,-50%)}
+.login-hero h1{position:relative;z-index:1;font-family:var(--cond);font-size:clamp(28px,4.4dvh,40px);font-weight:800;text-transform:uppercase;letter-spacing:.03em;line-height:.95;
+  animation:sobe .6s ease-out .15s both}
+.login-hero p{position:relative;z-index:1;font-size:12.5px;font-weight:600;opacity:.7;margin-top:6px;animation:sobe .6s ease-out .25s both}
+/* destaques do sistema: etiquetas no celular, lista no desktop */
+.login-feats{position:relative;z-index:1;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:16px;max-width:340px}
+.login-feats li{list-style:none;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+  padding:5px 11px 5px 5px;border-radius:100px;background:rgba(20,18,10,.09);animation:sobe .5s ease-out both}
+.login-feats li:nth-child(1){animation-delay:.35s}
+.login-feats li:nth-child(2){animation-delay:.45s}
+.login-feats li:nth-child(3){animation-delay:.55s}
+.login-feats li span{flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(20,18,10,.12)}
+.login-feats li span svg{width:13px;height:13px}
+
+.login-side{position:relative;flex:none;display:flex;justify-content:center;padding:16px 14px calc(18px + var(--safe-b))}
+.login-side .cr-s1,.login-side .cr-s2{display:none}
+.login-box{position:relative;z-index:1;width:100%;max-width:420px;padding:22px 18px 16px;
+  background:var(--surf);border:1px solid var(--line2);border-radius:24px;box-shadow:0 18px 50px rgba(0,0,0,.5);
+  animation:sobe .6s cubic-bezier(.2,.8,.2,1) .2s both}
+.login-box::before{content:"";position:absolute;left:28px;right:28px;top:-1px;height:2px;border-radius:2px;background:var(--goldg)}
+.login-h{font-family:var(--cond);font-size:26px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;line-height:1}
+.login-s{font-size:12.5px;color:var(--mut);margin:6px 0 18px}
+/* campo de senha com botão Mostrar/Ocultar */
+.senha-wrap{position:relative}
+.senha-wrap input{padding-right:84px}
+.senha-ver{position:absolute;right:6px;top:50%;transform:translateY(-50%);min-height:38px;padding:0 12px;border-radius:9px;
+  font-size:12.5px;font-weight:700;color:var(--gold)}
+.senha-ver:active{background:var(--gdim)}
+.login-box .btn{min-height:54px}
+.login-foot{text-align:center;font-size:11.5px;color:var(--mut2);margin-top:14px}
+
+@keyframes logo-entra{from{opacity:0;transform:scale(.82)}to{opacity:1;transform:scale(1)}}
+@keyframes logo-flutua{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes gira{to{transform:rotate(360deg)}}
+@keyframes sobe{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes bolha{0%,100%{transform:scale(1)}50%{transform:scale(1.1) translate(-8px,8px)}}
+@keyframes brilho{0%{transform:translateX(0) skewX(-18deg)}55%,100%{transform:translateX(620%) skewX(-18deg)}}
+@keyframes coroa-flutua{0%,100%{transform:translateY(0) rotate(var(--r,0deg))}50%{transform:translateY(-9px) rotate(calc(var(--r,0deg) + 6deg))}}
+
+/* celular baixo (ex.: 360x640): tira as etiquetas para o formulário caber sem rolar */
+@media (max-width:899px) and (max-height:700px){
+  .login-feats{display:none}
+  .login-hero{padding-top:calc(var(--safe-t) + 34px);padding-bottom:22px}
+  .login-logo{width:112px}
+}
+
+@media (min-width:900px){
+  .login{flex-direction:row;background:radial-gradient(45% 55% at 74% 50%,rgba(247,201,21,.10),transparent 70%),var(--bg)}
+  .login::before{top:0;left:46%;height:auto;
+    -webkit-mask-image:radial-gradient(ellipse 60% 60% at 50% 50%,#000 20%,transparent 75%);
+    mask-image:radial-gradient(ellipse 60% 60% at 50% 50%,#000 20%,transparent 75%)}
+  .login-hero{flex:0 0 46%;max-width:640px;border-radius:0 36px 36px 0;padding:56px 48px}
+  .login-hero::before{width:320px;height:320px;right:-110px;top:-120px}
+  .login-hero::after{width:240px;height:240px;left:-90px;bottom:-100px}
+  .login-hero .cr-h1{width:72px;left:10%;top:12%}
+  .login-hero .cr-h2{width:48px;right:12%;bottom:14%}
+  .login-logo{width:220px;margin-bottom:26px}
+  .login-logo::before{inset:-13px}
+  .login-hero h1{font-size:46px}
+  .login-hero p{font-size:14px}
+  .login-feats{flex-direction:column;flex-wrap:nowrap;align-items:flex-start;gap:12px;margin-top:30px;max-width:none}
+  .login-feats li{gap:12px;padding:0;background:none;font-size:13.5px;font-weight:600}
+  .login-feats li span{width:36px;height:36px;border-radius:11px}
+  .login-feats li span svg{width:17px;height:17px}
+  .login-side{flex:1;align-items:center;padding:40px}
+  .login-side .cr-s1,.login-side .cr-s2{display:block;color:rgba(247,201,21,.07)}
+  .login-side .cr-s1{width:90px;right:9%;top:11%;--r:16deg;--d:9s}
+  .login-side .cr-s2{width:56px;left:10%;bottom:12%;--r:-12deg;--d:7.5s;--atraso:-2s}
+  .login-box{max-width:400px;padding:32px 28px 24px}
+}
 
 /* ---------- texto auxiliar ---------- */
 .nota{font-size:12.5px;color:var(--mut);line-height:1.7}
@@ -292,7 +387,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
   .tbl{min-width:0}
   .usplit{gap:18px}
-  .login-box{max-width:400px}
 }
 
 /* ============================================================
