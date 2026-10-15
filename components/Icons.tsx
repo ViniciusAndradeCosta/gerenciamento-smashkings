@@ -139,3 +139,11 @@ export const IcoAjuste = (p: IconProps) => (
 );
 
 export const IcoOk = (p: IconProps) => <Svg sw={2.2} {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></Svg>;
+
+export const IcoProducao = (p: IconProps) => (
+  <Svg {...p}><path d="M4 10h16v7a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-7Z" /><path d="M2 10h20" /><path d="M9 6.5c0-1 1-1.5 1-2.5M14 6.5c0-1 1-1.5 1-2.5" /></Svg>
+);
+
+export const IcoTransferir = (p: IconProps) => (
+  <Svg {...p}><path d="M4 8h14l-3.5-3.5" /><path d="M20 16H6l3.5 3.5" /></Svg>
+);

@@ -355,6 +355,14 @@ button.item:active{background:rgba(255,255,255,.05)}
 .nf-acoes{display:flex;gap:10px}
 .nf-acoes .bt{height:50px}
 
+/* produção: prévia da transferência e caixa de marcar */
+.previa{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;background:var(--ndim);font-size:13px;color:var(--mut)}
+.previa div{display:flex;justify-content:space-between;gap:12px}
+.previa b{color:var(--txt);white-space:nowrap}
+.previa.erro{background:var(--rdim);color:var(--red)}
+.marcar{display:flex;align-items:flex-start;gap:10px;margin:4px 0 12px;font-size:13px;font-weight:600;cursor:pointer;line-height:1.35}
+.marcar input{width:20px;height:20px;flex:none;accent-color:var(--gold);margin-top:-1px}
+
 /* ---------- login ---------- */
 /* Pensado primeiro para o celular: faixa dourada com o logo no alto,
    ocupando o espaço livre, e o formulário logo abaixo, na altura do

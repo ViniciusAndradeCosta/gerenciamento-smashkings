@@ -8,7 +8,7 @@ import { IcoBusca, IcoEstoque, IcoPreparos, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl } from '@/lib/format';
 
-type Unidade = { id: string; nome: string; codigo?: string; cor?: string };
+type Unidade = { id: string; nome: string; codigo?: string; cor?: string; e_producao?: boolean };
 type Ingrediente = { id: string; nome: string; unidade_medida: string; custo_medio: number; e_produzido_internamente: boolean; estoque_minimo?: number };
 type Estoque = { unidade_id: string; ingrediente_id: string; quantidade: number };
 type Status = 'esgotado' | 'acabando' | 'normal';
@@ -61,7 +61,11 @@ export default function EstoquePage() {
 
   useEffect(() => { carregarDados(); }, []);
 
-  const unidadeDe = (id: string) => unidades.find((u) => u.id === id);
+  // a produção (cozinha central) tem tela própria: aqui ficam só as lojas
+  // ('geral' cobre bancos que ainda não rodaram o schema novo)
+  const lojas = useMemo(() => unidades.filter((u) => !u.e_producao && u.codigo !== 'geral'), [unidades]);
+  const idsLojas = useMemo(() => new Set(lojas.map((u) => u.id)), [lojas]);
+  const unidadeDe = (id: string) => lojas.find((u) => u.id === id);
   const qtdNaUnidade = (ingId: string, uniId: string) =>
     Number(estoques.find((e) => e.ingrediente_id === ingId && e.unidade_id === uniId)?.quantidade || 0);
 
@@ -71,7 +75,7 @@ export default function EstoquePage() {
     return ingredientes
       .filter((ing) => (tipo === 'preparos' ? ing.e_produzido_internamente === true : !ing.e_produzido_internamente))
       .map((ing) => {
-        const doIngrediente = estoques.filter((e) => e.ingrediente_id === ing.id);
+        const doIngrediente = estoques.filter((e) => e.ingrediente_id === ing.id && idsLojas.has(e.unidade_id));
         const qtdAtual = unidadeFiltro === 'Todas'
           ? doIngrediente.reduce((s, e) => s + (Number(e.quantidade) || 0), 0)
           : qtdNaUnidade(ing.id, unidadeFiltro);
@@ -82,14 +86,14 @@ export default function EstoquePage() {
       })
       .sort((a, b) => STATUS[a.status].ordem - STATUS[b.status].ordem || a.ing.nome.localeCompare(b.ing.nome, 'pt-BR'))
       .filter((l) => !termo || l.ing.nome.toLowerCase().includes(termo));
-  }, [ingredientes, estoques, tipo, unidadeFiltro, busca]);
+  }, [ingredientes, estoques, tipo, unidadeFiltro, busca, idsLojas]);
 
   const valorTotal = linhas.reduce((s, l) => s + l.valor, 0);
   const emAlerta = linhas.filter((l) => l.status !== 'normal').length;
 
   function abrirAjuste(ing: Ingrediente) {
     const mapa: Record<string, string> = {};
-    unidades.forEach((u) => { mapa[u.id] = qtd(qtdNaUnidade(ing.id, u.id)).replace(/\./g, ''); });
+    lojas.forEach((u) => { mapa[u.id] = qtd(qtdNaUnidade(ing.id, u.id)).replace(/\./g, ''); });
     setEditQtds(mapa);
     setEditMinimo(String(ing.estoque_minimo || 0).replace('.', ','));
     setAjustando(ing);
@@ -104,7 +108,7 @@ export default function EstoquePage() {
       if (error) throw new Error(error.message);
     };
 
-    const alvo = unidadeFiltro === 'Todas' ? unidades : unidades.filter((u) => u.id === unidadeFiltro);
+    const alvo = unidadeFiltro === 'Todas' ? lojas : lojas.filter((u) => u.id === unidadeFiltro);
     for (const u of alvo) {
       const val = paraNumero(editQtds[u.id] || '0');
       if (isNaN(val) || val < 0) { avisar(`Quantidade inválida em ${u.nome}.`, 'erro'); return; }
@@ -140,14 +144,14 @@ export default function EstoquePage() {
   }
 
   const unidadeAtual = unidadeFiltro === 'Todas' ? null : unidadeDe(unidadeFiltro);
-  const unidadesDoAjuste = unidadeFiltro === 'Todas' ? unidades : unidades.filter((u) => u.id === unidadeFiltro);
+  const unidadesDoAjuste = unidadeFiltro === 'Todas' ? lojas : lojas.filter((u) => u.id === unidadeFiltro);
 
   return (
     <>
-      <PageHeader titulo="Estoque" subtitulo={unidadeAtual ? `Unidade ${unidadeAtual.nome}` : 'Todas as unidades'}>
+      <PageHeader titulo="Estoque" subtitulo={unidadeAtual ? `Loja ${unidadeAtual.nome}` : 'Lojas · a cozinha central fica em Produção'}>
         <div className="chips" role="group" aria-label="Filtrar por unidade">
           <button className={'chip' + (unidadeFiltro === 'Todas' ? ' act' : '')} onClick={() => setUnidadeFiltro('Todas')}>Todas</button>
-          {unidades.map((u) => (
+          {lojas.map((u) => (
             <button key={u.id} className={'chip' + (unidadeFiltro === u.id ? ' act' : '')} onClick={() => setUnidadeFiltro(u.id)}>
               <span className="ud" style={{ background: u.cor || 'var(--gold)' }} />
               {u.nome}

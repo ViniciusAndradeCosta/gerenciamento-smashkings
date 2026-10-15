@@ -19,8 +19,8 @@ export default async function Comparativo() {
 
   const custoDe = new Map((custos || []).map((c: any) => [c.produto_id, Number(c.custo_total)]));
 
-  // A unidade 'geral' (produção) não entra no comparativo de lojas
-  const lojas = (unidades || []).filter((u: any) => u.codigo !== 'geral');
+  // A produção (cozinha central) não entra no comparativo de lojas
+  const lojas = (unidades || []).filter((u: any) => !u.e_producao && u.codigo !== 'geral');
 
   const dados = lojas.map((un) => {
     const minhas = (vendas || []).filter((v: any) => v.unidade_id === un.id);

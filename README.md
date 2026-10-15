@@ -9,6 +9,7 @@ Sistema web **mobile-first** e **instalável no celular** (PWA) para gestão das
 - **Multi-unidade:** Centro (U1) e Norte (U2), com visão separada e consolidada.
 - **CMP automático:** cada compra recalcula o Custo Médio Ponderado do ingrediente e soma ao estoque da unidade (trigger no banco).
 - **Preparos:** molhos e sub-receitas montados a partir dos insumos; o custo por kg/L entra automaticamente nas fichas dos lanches.
+- **Produção (cozinha central):** tela própria (menu Mais) para registrar o que foi produzido (American Cheese, molhos…), descontando os insumos da receita, e **transferir** estoque da produção para as lojas — sai de um lado e entra no outro numa única operação, com histórico. A produção não aparece como loja nas outras telas, mas pode receber compras.
 - **CMV:** calculado a partir das vendas × custo da ficha técnica de cada produto (a mesma conta nas Fichas, no dashboard e no chat).
 - **Alertas:** itens abaixo do estoque mínimo aparecem no dashboard.
 - **Nota fiscal com IA:** foto ou PDF da nota → o Gemini lê os itens → você revisa e lança tudo como compra.

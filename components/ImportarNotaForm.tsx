@@ -6,7 +6,7 @@ import { avisar } from './Toaster';
 import { IcoCamera, IcoArquivo, IcoLixo, IcoNota } from './Icons';
 import { brl } from '@/lib/format';
 
-type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string };
+type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string; e_producao?: boolean };
 // quantidade e preço ficam como texto enquanto a pessoa edita (aceita vírgula)
 type ItemNF = { id_temp: string; nome: string; quantidade: string; preco_total: string; unidade_medida: string };
 
@@ -47,7 +47,7 @@ export default function ImportarNotaForm({
 
   useEffect(() => {
     if (unidades.length > 0 && !unidadeSelecionada) {
-      const padrao = unidades.find((u) => u.codigo === 'producao' || u.codigo === 'geral' || u.nome.toLowerCase().includes('produção'));
+      const padrao = unidades.find((u) => u.e_producao) || unidades.find((u) => u.codigo === 'producao' || u.codigo === 'geral' || u.nome.toLowerCase().includes('produção'));
       setUnidadeSelecionada(padrao ? padrao.id : unidades[0].id);
     }
   }, [unidades, unidadeSelecionada]);

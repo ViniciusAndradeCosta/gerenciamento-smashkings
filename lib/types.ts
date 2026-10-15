@@ -1,4 +1,4 @@
-export type Unidade = { id: string; nome: string; codigo: string; cor: string };
+export type Unidade = { id: string; nome: string; codigo: string; cor: string; e_producao?: boolean };
 export type Estoque = {
   id: string; unidade_id: string; ingrediente_id: string;
   quantidade: number; custo_medio: number; estoque_minimo: number;

@@ -15,7 +15,8 @@ export default async function CMV({ searchParams }: { searchParams: Promise<{ u?
   const { u } = await searchParams;
   const supabase = await createClient();
   const { data: unidades } = await supabase.from('unidades').select('*').order('codigo');
-  const alvo = (unidades || []).find((x) => x.codigo === u);
+  const lojas = (unidades || []).filter((un) => !un.e_producao && un.codigo !== 'geral');
+  const alvo = lojas.find((x) => x.codigo === u);
   const desde = inicioDoMes();
 
   let vq = supabase.from('vendas').select('produto_id, quantidade, valor_total').gte('data_venda', desde);
@@ -46,7 +47,7 @@ export default async function CMV({ searchParams }: { searchParams: Promise<{ u?
     <>
       <PageHeader titulo="CMV" subtitulo={alvo ? `Custo da mercadoria vendida · ${alvo.nome}` : 'Custo da mercadoria vendida · consolidado'}>
         <Suspense fallback={<div className="useg" />}>
-          <UnitSwitcher unidades={unidades || []} />
+          <UnitSwitcher unidades={lojas} />
         </Suspense>
       </PageHeader>
 

@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import Sheet from './Sheet';
 import {
   IcoInicio, IcoEstoque, IcoCmv, IcoFichas, IcoCompras,
-  IcoComparativo, IcoMais, IcoSair, IcoProdutos, IcoPreparos, IcoGrade,
+  IcoComparativo, IcoMais, IcoSair, IcoProdutos, IcoPreparos, IcoGrade, IcoProducao,
 } from './Icons';
 
 type Item = { href: string; label: string; Ico: (p: { size?: number }) => React.JSX.Element };
@@ -19,6 +19,7 @@ const grupos: { titulo: string; itens: Item[] }[] = [
     itens: [
       { href: '/', label: 'Início', Ico: IcoInicio },
       { href: '/estoque', label: 'Estoque', Ico: IcoEstoque },
+      { href: '/producao', label: 'Produção', Ico: IcoProducao },
       { href: '/compras', label: 'Compras', Ico: IcoCompras },
       { href: '/cmv', label: 'CMV', Ico: IcoCmv },
       { href: '/comparativo', label: 'Comparativo', Ico: IcoComparativo },
@@ -42,6 +43,7 @@ const barraEsq: Item[] = [
 const barraDir: Item[] = [{ href: '/cmv', label: 'CMV', Ico: IcoCmv }];
 const noMais: Item[] = [
   { href: '/compras', label: 'Compras', Ico: IcoCompras },
+  { href: '/producao', label: 'Produção', Ico: IcoProducao },
   { href: '/produtos', label: 'Produtos', Ico: IcoProdutos },
   { href: '/fichas', label: 'Fichas', Ico: IcoFichas },
   { href: '/preparos', label: 'Preparos', Ico: IcoPreparos },

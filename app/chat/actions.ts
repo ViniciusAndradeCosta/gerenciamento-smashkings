@@ -53,7 +53,7 @@ async function montarResumo(): Promise<Resumo> {
     { data: compras },
     { data: estoque },
   ] = await Promise.all([
-    supabase.from('unidades').select('nome, id').order('codigo'),
+    supabase.from('unidades').select('*').order('codigo'),
     supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hj),
     supabase.from('vendas').select('valor_total').eq('data_venda', ont),
     supabase.from('vendas').select('produto_id, quantidade, valor_total, unidade_id').gte('data_venda', desde),
@@ -96,7 +96,7 @@ async function montarResumo(): Promise<Resumo> {
       status: a.status,
       unidade: a.unidade_nome,
     })),
-    porUnidade: (unidades || []).map((un: any) => ({
+    porUnidade: (unidades || []).filter((un: any) => !un.e_producao && un.codigo !== 'geral').map((un: any) => ({
       nome: un.nome,
       faturamento: (vMes || [])
         .filter((v: any) => v.unidade_id === un.id)

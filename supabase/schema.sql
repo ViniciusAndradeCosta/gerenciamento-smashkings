@@ -370,3 +370,133 @@ insert into unidades (nome, codigo, cor)
 select v.nome, v.codigo, v.cor
 from (values ('João Monlevade', 'U1', '#f7c915'), ('Bela Vista', 'U2', '#79e0a0')) as v(nome, codigo, cor)
 where not exists (select 1 from unidades);
+
+-- 14. PRODUÇÃO (cozinha central) E TRANSFERÊNCIAS
+-- A produção é um local de estoque (uma linha de unidades marcada com
+-- e_producao), mas no app ela tem tela própria e não aparece como loja.
+-- Lá se registra o que foi produzido (American Cheese, molhos...) e se
+-- transfere estoque para as lojas.
+alter table unidades add column if not exists e_producao boolean not null default false;
+
+-- marca a unidade "Produção" que já existir; se não houver, cria
+update unidades set e_producao = true
+where id = (select id from unidades
+            where codigo in ('geral', 'producao') or nome ilike 'produ%'
+            order by criado_em limit 1)
+  and not exists (select 1 from unidades where e_producao);
+insert into unidades (nome, codigo, cor, e_producao)
+select 'Produção', 'producao', '#c9a227', true
+where not exists (select 1 from unidades where e_producao);
+
+create table if not exists producoes (
+  id uuid primary key default uuid_generate_v4(),
+  ingrediente_id uuid not null references ingredientes(id) on delete cascade, -- o preparo produzido
+  unidade_id uuid not null references unidades(id),                            -- onde foi produzido
+  quantidade numeric(14,3) not null check (quantidade > 0),
+  baixou_insumos boolean not null default true,
+  criado_por uuid default auth.uid() references auth.users(id) on delete set null,
+  criado_em timestamptz default now()
+);
+create table if not exists transferencias (
+  id uuid primary key default uuid_generate_v4(),
+  ingrediente_id uuid not null references ingredientes(id) on delete cascade,
+  origem_id uuid not null references unidades(id),
+  destino_id uuid not null references unidades(id),
+  quantidade numeric(14,3) not null check (quantidade > 0),
+  criado_por uuid default auth.uid() references auth.users(id) on delete set null,
+  criado_em timestamptz default now()
+);
+create index if not exists idx_producoes_data on producoes (criado_em desc);
+create index if not exists idx_transferencias_data on transferencias (criado_em desc);
+
+create or replace function public.unidade_producao() returns uuid
+language sql stable set search_path = public as $$
+  select id from unidades where e_producao order by criado_em limit 1; $$;
+
+-- Soma (ou subtrai, com quantidade negativa) no estoque de um local,
+-- misturando o custo médio quando entra mercadoria.
+create or replace function public.somar_estoque(p_unidade uuid, p_ingrediente uuid, p_qtd numeric, p_custo numeric)
+returns void language plpgsql set search_path = public as $$
+begin
+  update estoque set
+    custo_medio = case
+      when p_qtd > 0 and p_custo > 0 and quantidade > 0 and custo_medio > 0
+        then (quantidade * custo_medio + p_qtd * p_custo) / (quantidade + p_qtd)
+      when p_qtd > 0 and p_custo > 0 then p_custo
+      else custo_medio end,
+    quantidade = quantidade + p_qtd,
+    atualizado_em = now()
+  where unidade_id = p_unidade and ingrediente_id = p_ingrediente;
+  if not found then
+    insert into estoque (unidade_id, ingrediente_id, quantidade, custo_medio)
+    values (p_unidade, p_ingrediente, p_qtd, greatest(coalesce(p_custo, 0), 0));
+  end if;
+end; $$;
+
+-- Registra um lote produzido: soma o preparo ao estoque da produção e,
+-- se pedido, desconta os insumos da receita (proporcional ao rendimento).
+-- Roda com as permissões de quem chama (o RLS continua valendo).
+create or replace function public.registrar_producao(p_preparo uuid, p_quantidade numeric, p_baixar_insumos boolean default true)
+returns uuid language plpgsql set search_path = public as $$
+declare v_prod uuid := unidade_producao(); v_rend numeric; v_custo numeric; v_id uuid; r record;
+begin
+  if not sou_admin() then raise exception 'Somente o administrador registra produção.'; end if;
+  if v_prod is null then raise exception 'Nenhum local de produção cadastrado.'; end if;
+  if p_quantidade is null or p_quantidade <= 0 then raise exception 'Informe uma quantidade maior que zero.'; end if;
+  select coalesce(nullif(rendimento_receita, 0), 1) into v_rend
+    from ingredientes where id = p_preparo and e_produzido_internamente;
+  if not found then raise exception 'Esse item não é um preparo.'; end if;
+
+  if p_baixar_insumos then
+    for r in select ingrediente_id, quantidade from preparo_itens where insumo_pai_id = p_preparo loop
+      perform somar_estoque(v_prod, r.ingrediente_id, -(r.quantidade * p_quantidade / v_rend), 0);
+    end loop;
+  end if;
+
+  select custo_unitario into v_custo from v_custo_ingrediente where ingrediente_id = p_preparo;
+  perform somar_estoque(v_prod, p_preparo, p_quantidade, coalesce(v_custo, 0));
+
+  insert into producoes (ingrediente_id, unidade_id, quantidade, baixou_insumos)
+  values (p_preparo, v_prod, p_quantidade, p_baixar_insumos) returning id into v_id;
+  return v_id;
+end; $$;
+
+-- Transfere estoque de um local para outro (por padrão, da produção para
+-- uma loja) numa única operação: ou sai de um e entra no outro, ou nada muda.
+create or replace function public.transferir_estoque(p_ingrediente uuid, p_destino uuid, p_quantidade numeric, p_origem uuid default null)
+returns uuid language plpgsql set search_path = public as $$
+declare v_origem uuid := coalesce(p_origem, unidade_producao()); v_disp numeric; v_custo numeric; v_id uuid;
+begin
+  if not sou_admin() then raise exception 'Somente o administrador faz transferências.'; end if;
+  if v_origem is null then raise exception 'Nenhum local de produção cadastrado.'; end if;
+  if p_destino is null or p_destino = v_origem then raise exception 'Escolha um destino diferente da origem.'; end if;
+  if p_quantidade is null or p_quantidade <= 0 then raise exception 'Informe uma quantidade maior que zero.'; end if;
+
+  select quantidade, custo_medio into v_disp, v_custo
+    from estoque where unidade_id = v_origem and ingrediente_id = p_ingrediente for update;
+  if coalesce(v_disp, 0) < p_quantidade then
+    raise exception 'Estoque insuficiente: há % na origem.',
+      replace(rtrim(to_char(coalesce(v_disp, 0), 'FM999999990.999'), '.'), '.', ',');
+  end if;
+
+  update estoque set quantidade = quantidade - p_quantidade, atualizado_em = now()
+   where unidade_id = v_origem and ingrediente_id = p_ingrediente;
+  perform somar_estoque(p_destino, p_ingrediente, p_quantidade, coalesce(v_custo, 0));
+
+  insert into transferencias (ingrediente_id, origem_id, destino_id, quantidade)
+  values (p_ingrediente, v_origem, p_destino, p_quantidade) returning id into v_id;
+  return v_id;
+end; $$;
+
+alter table producoes enable row level security;
+alter table transferencias enable row level security;
+drop policy if exists "producoes_ver" on producoes;
+drop policy if exists "producoes_admin" on producoes;
+drop policy if exists "transferencias_ver" on transferencias;
+drop policy if exists "transferencias_admin" on transferencias;
+-- histórico: qualquer conta liberada vê a produção; transferências, quem é da origem ou do destino
+create policy "producoes_ver" on producoes for select to authenticated using (tenho_acesso());
+create policy "producoes_admin" on producoes for all to authenticated using (sou_admin()) with check (sou_admin());
+create policy "transferencias_ver" on transferencias for select to authenticated
+  using (sou_admin() or (tenho_acesso() and (origem_id = minha_unidade() or destino_id = minha_unidade())));
+create policy "transferencias_admin" on transferencias for all to authenticated using (sou_admin()) with check (sou_admin());

@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 import Hero from '@/components/Hero';
 import PageHeader from '@/components/PageHeader';
 import UnitSwitcher from '@/components/UnitSwitcher';
-import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque, IcoNota, IcoFichas } from '@/components/Icons';
+import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque, IcoNota, IcoProducao } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl, brlCurto, num, pct } from '@/lib/format';
 import { hoje, ontem, inicioDoMes, saudacao } from '@/lib/date';
@@ -40,7 +40,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     );
   }
 
-  const alvo = (unidades || []).find((x) => x.codigo === u);
+  // A produção (cozinha central) tem tela própria e não entra como loja
+  // ('geral' cobre bancos que ainda não rodaram o schema novo)
+  const lojas = (unidades || []).filter((un) => !un.e_producao && un.codigo !== 'geral');
+  const idsLojas = new Set(lojas.map((un) => un.id));
+  const alvo = lojas.find((x) => x.codigo === u);
 
   const hj = hoje();
   const ont = ontem();
@@ -52,8 +56,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     { data: vOntem },
     { data: vMes },
     { data: custos },
-    { data: valorEst },
-    { data: alertas },
+    { data: valorEstTodos },
+    { data: alertasTodos },
   ] = await Promise.all([
     porUnidadeDe(supabase.from('vendas').select('valor_total, quantidade, unidade_id').eq('data_venda', hj)),
     porUnidadeDe(supabase.from('vendas').select('valor_total').eq('data_venda', ont)),
@@ -73,13 +77,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const custoMes = (vMes || []).reduce((s: number, x: any) => s + (custoDe.get(x.produto_id) || 0) * Number(x.quantidade), 0);
   const cmv = fatMes ? (custoMes / fatMes) * 100 : 0;
 
-  const valorEstoque = (valorEst || []).reduce((s: number, x: any) => s + Number(x.valor_total), 0);
+  // estoque e alertas só das lojas (o da produção aparece na tela Produção)
+  const valorEst = (valorEstTodos || []).filter((x: any) => idsLojas.has(x.unidade_id));
+  const alertas = (alertasTodos || []).filter((x: any) => idsLojas.has(x.unidade_id));
+  const valorEstoque = valorEst.reduce((s: number, x: any) => s + Number(x.valor_total), 0);
 
-  // FILTRO: Removemos o 'geral' para montar os cards de faturamento por unidade
   const porUnidade = alvo
     ? []
-    : (unidades || [])
-        .filter((un) => un.codigo !== 'geral')
+    : lojas
         .map((un) => ({
           ...un,
           fat: (vHoje || []).filter((v: any) => v.unidade_id === un.id).reduce((s: number, x: any) => s + Number(x.valor_total), 0),
@@ -89,8 +94,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   const primeiroNome = String(user?.user_metadata?.nome || user?.email || '').split(/[\s@]/)[0];
   
-  // FILTRO: Contamos apenas as lojas reais (ignorando o 'geral') para o título
-  const qtdUnidades = (unidades || []).filter((u) => u.codigo !== 'geral').length;
+  const qtdUnidades = lojas.length;
   
   const linkEstoque = alvo ? `/estoque?u=${alvo.codigo}` : '/estoque';
 
@@ -104,8 +108,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       />
 
       <Suspense fallback={<div className="useg" />}>
-        {/* O UnitSwitcher continua recebendo todas as unidades (incluindo o Geral) para os botões funcionarem */}
-        <UnitSwitcher unidades={unidades || []} />
+        <UnitSwitcher unidades={lojas} />
       </Suspense>
 
       <div className="wrap">
@@ -114,7 +117,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           <Link href="/compras" className="atalho"><span><IcoCompras size={21} /></span>Nova compra</Link>
           <Link href="/compras?modo=ocr" className="atalho"><span><IcoNota size={21} /></span>Ler nota</Link>
           <Link href={linkEstoque} className="atalho"><span><IcoEstoque size={21} /></span>Estoque</Link>
-          <Link href="/fichas" className="atalho"><span><IcoFichas size={21} /></span>Fichas</Link>
+          <Link href="/producao" className="atalho"><span><IcoProducao size={21} /></span>Produção</Link>
         </nav>
 
         <div className="lbl">Resumo do dia</div>
