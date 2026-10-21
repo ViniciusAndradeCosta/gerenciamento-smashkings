@@ -5,12 +5,16 @@ import { createClient } from '@/lib/supabase/client';
 import { avisar } from './Toaster';
 import { IcoCamera, IcoArquivo, IcoLixo, IcoNota } from './Icons';
 import { brl } from '@/lib/format';
+import { converter, lerNumero, normalizar, rotulo, textoEm, type Medida } from '@/lib/medidas';
 
 type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string; e_producao?: boolean };
 // quantidade e preço ficam como texto enquanto a pessoa edita (aceita vírgula)
 type ItemNF = { id_temp: string; nome: string; quantidade: string; preco_total: string; unidade_medida: string };
 
-const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
+const paraNumero = lerNumero;
+
+// insumo novo é cadastrado na base da família: peso em kg, líquido em L
+const BASE_DA_FAMILIA: Record<Medida, Medida> = { kg: 'kg', g: 'kg', l: 'l', ml: 'l', un: 'un' };
 const paraTexto = (n: number) => String(n ?? '').replace('.', ',');
 
 // A Vercel recusa requisições acima de ~4,5 MB, e foto de celular passa disso
@@ -31,6 +35,22 @@ async function prepararArquivo(file: File): Promise<File> {
   } catch {
     return file; // formato que o navegador não decodifica: envia como está
   }
+}
+
+/** Observação embaixo de cada item lido: para onde vai e em que medida. */
+function NotaDestino({ existente, daNota, base, qBase, incompativel }: { existente?: Opt; daNota: Medida; base: string; qBase: number; incompativel: boolean }) {
+  if (incompativel) {
+    return (
+      <p className="dica" style={{ color: 'var(--red)' }}>
+        O cadastro está em {rotulo(base)} e a nota diz {rotulo(daNota)}. Corrija a medida ou o nome do insumo.
+      </p>
+    );
+  }
+  // a nota veio em outra medida (500 G num insumo em kg): mostra o valor que entra
+  const conv = normalizar(base) !== daNota && qBase > 0 ? `${textoEm(qBase, base, normalizar(base))} ${rotulo(base)}` : '';
+  return existente
+    ? <p className="dica">Já cadastrado em {rotulo(base)}{conv && ` — entra como ${conv}`}.</p>
+    : <p className="dica" style={{ color: 'var(--gold)' }}>Insumo novo — será cadastrado em {rotulo(base)}{conv && `, com ${conv}`}.</p>;
 }
 
 export default function ImportarNotaForm({
@@ -92,7 +112,7 @@ export default function ImportarNotaForm({
         nome: String(item.nome).replace(/\s+\d+(,\d+)?\s*(kg|g|ml|l|mg|un|cx|pcte|pacote)s?$/i, '').trim(),
         quantidade: paraTexto(item.quantidade),
         preco_total: paraTexto(item.preco_total),
-        unidade_medida: item.unidade_medida || 'UN',
+        unidade_medida: normalizar(item.unidade_medida),
       }));
       if (!lidos.length) throw new Error('Não encontrei itens nessa nota. Tente uma foto mais nítida.');
       setItens(lidos);
@@ -109,9 +129,24 @@ export default function ImportarNotaForm({
   const remover = (id: string) => setItens((lista) => lista.filter((i) => i.id_temp !== id));
   const totalNota = itens.reduce((s, i) => s + (paraNumero(i.preco_total) || 0), 0);
 
+  /**
+   * Para onde vai cada item e em que medida: a nota pode vir em g para um
+   * insumo controlado em kg (500 g entram como 0,5 kg). Medidas que não se
+   * convertem (un na nota, kg no cadastro) bloqueiam o lançamento.
+   */
+  function destino(item: ItemNF) {
+    const existente = ingredientes.find((ing) => ing.nome.toLowerCase().trim() === item.nome.toLowerCase().trim());
+    const daNota = normalizar(item.unidade_medida);
+    const base = existente ? (existente.unidade_medida || 'un') : BASE_DA_FAMILIA[daNota];
+    const qBase = converter(paraNumero(item.quantidade), daNota, base);
+    return { existente, daNota, base, qBase, incompativel: isNaN(qBase) };
+  }
+
   async function salvarNoBanco() {
     const invalido = itens.find((i) => !i.nome.trim() || !(paraNumero(i.quantidade) > 0) || isNaN(paraNumero(i.preco_total)));
     if (invalido) return avisar(`Confira o item "${invalido.nome || 'sem nome'}": nome, quantidade e preço.`, 'erro');
+    const semConversao = itens.find((i) => destino(i).incompativel);
+    if (semConversao) return avisar(`A medida de "${semConversao.nome}" não bate com o cadastro. Ajuste antes de lançar.`, 'erro');
 
     setSalvando(true);
     const supabase = createClient();
@@ -122,13 +157,13 @@ export default function ImportarNotaForm({
 
     for (const item of itens) {
       const chave = item.nome.toLowerCase().trim();
-      const quantidade = paraNumero(item.quantidade);
-      let idDoIngrediente = ingredientes.find((ing) => ing.nome.toLowerCase().trim() === chave)?.id || criados.get(chave) || null;
+      const { existente, base, qBase: quantidade } = destino(item);
+      let idDoIngrediente = existente?.id || criados.get(chave) || null;
 
       if (!idDoIngrediente) {
         const { data: novo, error } = await supabase
           .from('ingredientes')
-          .insert({ nome: item.nome.trim(), unidade_medida: item.unidade_medida || 'UN', ativo: true })
+          .insert({ nome: item.nome.trim(), unidade_medida: base, ativo: true })
           .select('id')
           .single();
         if (error) { console.error(`Erro ao criar o insumo ${item.nome}:`, error); erros++; continue; }
@@ -186,7 +221,7 @@ export default function ImportarNotaForm({
                 <label className="nf-mini">
                   <span>Medida</span>
                   <select className="inp" value={item.unidade_medida} onChange={(e) => mudar(item.id_temp, 'unidade_medida', e.target.value)}>
-                    {Array.from(new Set(['UN', 'KG', 'G', 'L', 'ML', item.unidade_medida])).map((m) => <option key={m} value={m}>{m}</option>)}
+                    {(['un', 'kg', 'g', 'l', 'ml'] as Medida[]).map((m) => <option key={m} value={m}>{rotulo(m)}</option>)}
                   </select>
                 </label>
                 <label className="nf-mini">
@@ -194,9 +229,7 @@ export default function ImportarNotaForm({
                   <input className="inp" inputMode="decimal" value={item.preco_total} onChange={(e) => mudar(item.id_temp, 'preco_total', e.target.value)} />
                 </label>
               </div>
-              {ingredientes.some((ing) => ing.nome.toLowerCase().trim() === item.nome.toLowerCase().trim())
-                ? <p className="dica">Já cadastrado — soma ao estoque existente.</p>
-                : <p className="dica" style={{ color: 'var(--gold)' }}>Insumo novo — será cadastrado.</p>}
+              <NotaDestino {...destino(item)} />
             </div>
           ))}
         </div>

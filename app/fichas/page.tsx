@@ -3,18 +3,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
 import Sheet from '@/components/Sheet';
+import QtdInput from '@/components/QtdInput';
 import { avisar } from '@/components/Toaster';
 import { IcoBusca, IcoLixo, IcoMais, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl, num } from '@/lib/format';
 import { CATEGORIAS } from '@/lib/categorias';
+import { campoQtd, campoVazio, custoPor, lerCampo, type CampoQtd } from '@/lib/medidas';
 
 type Produto = { id: string; nome: string; preco_venda: number; custo_fixo?: number; custo_extra?: number; categoria?: string | null; ativo: boolean };
 type Ingrediente = { id: string; nome: string; unidade_medida: string; custo_medio: number };
 type FichaItem = { id: string; produto_id: string; ingrediente_id: string; quantidade: number; ingredientes?: Ingrediente };
 
-const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
-const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 const custoFixoDe = (p: Produto) => Number(p.custo_fixo ?? p.custo_extra ?? 1.5);
 
 export default function FichasPage() {
@@ -28,8 +28,8 @@ export default function FichasPage() {
 
   const [aberto, setAberto] = useState<Produto | null>(null);
   const [novoInsumo, setNovoInsumo] = useState('');
-  const [novaQtd, setNovaQtd] = useState('');
-  const [qtds, setQtds] = useState<Record<string, string>>({});
+  const [novaQtd, setNovaQtd] = useState<CampoQtd>(campoVazio());
+  const [qtds, setQtds] = useState<Record<string, CampoQtd>>({});
   const [salvandoItem, setSalvandoItem] = useState(false);
 
   async function carregarDados() {
@@ -50,12 +50,17 @@ export default function FichasPage() {
     if (resFichas.data) {
       const itens = resFichas.data.map((item) => ({ ...item, ingredientes: ings.find((ing) => ing.id === item.ingrediente_id) }));
       setFichas(itens);
-      setQtds(Object.fromEntries(itens.map((i) => [i.id, qtd(Number(i.quantidade)).replace(/\./g, '')])));
+      setQtds(Object.fromEntries(itens.map((i) => [i.id, campoQtd(Number(i.quantidade), i.ingredientes?.unidade_medida)])));
     }
     setCarregando(false);
   }
 
   useEffect(() => { carregarDados(); }, []);
+
+  // insumo escolhido para adicionar: o campo passa para a medida dele (g, ml ou un)
+  const ingNovo = ingredientes.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+  const baseNova = ingNovo?.unidade_medida;
+  useEffect(() => { setNovaQtd((q) => ({ ...campoVazio(baseNova), texto: q.texto })); }, [baseNova]);
 
   // custos de cada produto já calculados
   const custos = useMemo(() => {
@@ -88,9 +93,9 @@ export default function FichasPage() {
   async function adicionarInsumo(e: React.FormEvent) {
     e.preventDefault();
     if (!aberto) return;
-    const ing = ingredientes.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+    const ing = ingNovo;
     if (!ing) return avisar('Escolha um insumo da lista.', 'erro');
-    const quantidade = paraNumero(novaQtd);
+    const quantidade = lerCampo(novaQtd, ing.unidade_medida);
     if (!(quantidade > 0)) return avisar('Informe a quantidade usada.', 'erro');
 
     setSalvandoItem(true);
@@ -98,16 +103,17 @@ export default function FichasPage() {
     setSalvandoItem(false);
     if (error) return avisar('Erro ao adicionar: ' + error.message, 'erro');
     setNovoInsumo('');
-    setNovaQtd('');
+    setNovaQtd(campoVazio());
     carregarDados();
   }
 
   async function salvarQtd(item: FichaItem) {
-    const valor = paraNumero(qtds[item.id] || '');
-    if (valor === Number(item.quantidade)) return;
+    const base = item.ingredientes?.unidade_medida;
+    const valor = lerCampo(qtds[item.id], base);
+    if (Math.abs(valor - Number(item.quantidade)) < 1e-9) return;
     if (!(valor > 0)) {
       avisar('Quantidade inválida.', 'erro');
-      return setQtds({ ...qtds, [item.id]: qtd(Number(item.quantidade)) });
+      return setQtds({ ...qtds, [item.id]: campoQtd(Number(item.quantidade), base) });
     }
     const { error } = await supabase.from('ficha_itens').update({ quantidade: valor }).eq('id', item.id);
     if (error) return avisar('Erro ao editar: ' + error.message, 'erro');
@@ -216,12 +222,13 @@ export default function FichasPage() {
                   <div className="comp-l" key={item.id}>
                     <div className="item-main">
                       <b>{item.ingredientes?.nome || '—'}</b>
-                      <span>{brl(custoUn)} / {item.ingredientes?.unidade_medida}</span>
+                      <span>{custoPor(custoUn, item.ingredientes?.unidade_medida)}</span>
                     </div>
-                    <div className="comp-q inp-un">
-                      <input
-                        className="inp" inputMode="decimal" aria-label={`Quantidade de ${item.ingredientes?.nome}`}
-                        value={qtds[item.id] ?? ''} onChange={(e) => setQtds({ ...qtds, [item.id]: e.target.value })}
+                    <div className="comp-q">
+                      <QtdInput
+                        base={item.ingredientes?.unidade_medida} rotuloAria={`Quantidade de ${item.ingredientes?.nome}`}
+                        texto={qtds[item.id]?.texto ?? ''} medida={qtds[item.id]?.medida ?? 'un'}
+                        onChange={(texto, medida) => setQtds({ ...qtds, [item.id]: { texto, medida } })}
                         onBlur={() => salvarQtd(item)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                       />
                     </div>
@@ -247,13 +254,14 @@ export default function FichasPage() {
                 </datalist>
               </div>
               <div className="field">
-                <input inputMode="decimal" value={novaQtd} onChange={(e) => setNovaQtd(e.target.value)} placeholder="Qtd" aria-label="Quantidade" />
+                <QtdInput base={baseNova} texto={novaQtd.texto} medida={novaQtd.medida} placeholder="Qtd" rotuloAria="Quantidade"
+                  onChange={(texto, medida) => setNovaQtd({ texto, medida })} />
               </div>
               <button type="submit" className="bt bt-prim bt-ic" disabled={salvandoItem} aria-label="Adicionar insumo" style={{ height: 48, width: 48 }}>
                 <IcoMais size={20} />
               </button>
             </form>
-            <p className="dica">A quantidade é na medida do insumo (ex.: 0,05 para 50 g de um insumo em kg).</p>
+            <p className="dica">Digite na medida que for mais prática (ex.: 50 g de cheddar) — o sistema converte.</p>
           </>
         )}
       </Sheet>

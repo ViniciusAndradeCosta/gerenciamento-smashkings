@@ -1,13 +1,13 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { avisar } from './Toaster';
+import QtdInput from './QtdInput';
 import { brl } from '@/lib/format';
+import { BASES, compativeis, converterPreco, custoPor, fmtQtd, lerNumero, lerQtd, normalizar, rotulo, type Medida } from '@/lib/medidas';
 
 type Opt = { id: string; nome: string; codigo?: string; unidade_medida?: string };
-
-const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
 
 export default function CompraForm({
   unidades, ingredientes, fornecedores, unidadeInicial,
@@ -18,24 +18,34 @@ export default function CompraForm({
   const [unidade, setUnidade] = useState(unidadeInicial || unidades[0]?.id || '');
   const [ingredienteInput, setIngredienteInput] = useState('');
   const [fornecedorInput, setFornecedorInput] = useState('');
-  const [quantidade, setQuantidade] = useState('');
-  const [precoUnitario, setPrecoUnitario] = useState('');
-  const [medidaNova, setMedidaNova] = useState('UN');
+  const [medidaNova, setMedidaNova] = useState<Medida>('kg');
+  const [qtdTexto, setQtdTexto] = useState('');
+  const [qtdMedida, setQtdMedida] = useState<Medida>('kg');
+  const [precoTexto, setPrecoTexto] = useState('');
+  // preço por kg, por g… ou o total pago (quando só se tem o valor da nota)
+  const [precoModo, setPrecoModo] = useState<Medida | 'total'>('kg');
   const [carregando, setCarregando] = useState(false);
 
-  // Descobre a unidade de medida se o ingrediente já existir na lista
   const ingEncontrado = ingredientes.find((i) => i.nome.toLowerCase().trim() === ingredienteInput.toLowerCase().trim());
   const ingredienteNovo = !ingEncontrado && ingredienteInput.trim() !== '';
-  const siglaMedida = ingEncontrado?.unidade_medida || medidaNova;
-  const totalPrevisto = paraNumero(quantidade) * paraNumero(precoUnitario);
+  const base = ingEncontrado?.unidade_medida || medidaNova;
+
+  // trocou de insumo (ou de medida do insumo novo): volta para a medida dele
+  useEffect(() => {
+    setQtdMedida(normalizar(base));
+    setPrecoModo(normalizar(base));
+  }, [base]);
+
+  const qBase = lerQtd(qtdTexto, qtdMedida, base);
+  const p = lerNumero(precoTexto);
+  const precoBase = precoModo === 'total' ? p / qBase : converterPreco(p, precoModo, base);
+  const totalPrevisto = qBase * precoBase;
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    const q = paraNumero(quantidade);
-    const p = paraNumero(precoUnitario);
     if (!ingredienteInput.trim()) return avisar('Informe o insumo.', 'erro');
-    if (!(q > 0)) return avisar('Informe uma quantidade maior que zero.', 'erro');
-    if (isNaN(p) || p < 0) return avisar('Informe um preço válido.', 'erro');
+    if (!(qBase > 0)) return avisar('Informe uma quantidade maior que zero.', 'erro');
+    if (!(precoBase >= 0) || !isFinite(precoBase)) return avisar('Informe um preço válido.', 'erro');
 
     setCarregando(true);
     const supabase = createClient();
@@ -71,13 +81,14 @@ export default function CompraForm({
         }
       }
 
-      // 3. A compra (o banco soma ao estoque e recalcula o custo médio)
+      // 3. A compra, sempre na medida base do insumo (o banco soma ao
+      // estoque e recalcula o custo médio)
       const { error: erroCompra } = await supabase.from('compras').insert({
         unidade_id: unidade,
         ingrediente_id: idDoIngrediente,
         fornecedor_id: idDoFornecedor,
-        quantidade: q,
-        preco_unitario: p,
+        quantidade: qBase,
+        preco_unitario: precoBase,
       });
       if (erroCompra) {
         throw new Error(erroCompra.message.includes('row-level security')
@@ -85,9 +96,9 @@ export default function CompraForm({
           : 'Erro ao salvar compra: ' + erroCompra.message);
       }
 
-      avisar(`Compra de ${ingredienteInput.trim()} registrada.`);
-      setQuantidade('');
-      setPrecoUnitario('');
+      avisar(`Compra registrada: ${fmtQtd(qBase, base)} de ${ingredienteInput.trim()}.`);
+      setQtdTexto('');
+      setPrecoTexto('');
       setIngredienteInput('');
       setFornecedorInput('');
       router.refresh();
@@ -120,13 +131,14 @@ export default function CompraForm({
         {ingredienteNovo && <p className="dica" style={{ color: 'var(--gold)' }}>Insumo novo — será cadastrado junto com a compra.</p>}
       </div>
 
-      {/* Insumo novo: escolhe a medida (não dá para mudar depois pela tela) */}
+      {/* Insumo novo: como ele é controlado (peso, líquido ou unidade) */}
       {ingredienteNovo && (
         <div className="field">
-          <label htmlFor="cf-medida">Medida do novo insumo</label>
-          <select id="cf-medida" value={medidaNova} onChange={(e) => setMedidaNova(e.target.value)}>
-            {['UN', 'KG', 'G', 'L', 'ML'].map((m) => <option key={m} value={m}>{m}</option>)}
+          <label htmlFor="cf-medida">Como controlar esse insumo</label>
+          <select id="cf-medida" value={medidaNova} onChange={(e) => setMedidaNova(e.target.value as Medida)}>
+            {BASES.map((b) => <option key={b.medida} value={b.medida}>{b.nome}</option>)}
           </select>
+          <p className="dica">Em peso e líquido dá para lançar em g ou kg, ml ou L — o sistema converte.</p>
         </div>
       )}
 
@@ -144,23 +156,31 @@ export default function CompraForm({
       <div className="field2">
         <div className="field">
           <label htmlFor="cf-qtd">Quantidade</label>
-          <div className="inp-un">
-            <input id="cf-qtd" inputMode="decimal" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" required />
-            <span>{siglaMedida}</span>
-          </div>
+          <QtdInput id="cf-qtd" base={base} texto={qtdTexto} medida={qtdMedida} placeholder="0"
+            onChange={(t, m) => { setQtdTexto(t); setQtdMedida(m); }} />
         </div>
         <div className="field">
-          <label htmlFor="cf-preco">Preço por {siglaMedida}</label>
-          <div className="inp-un">
-            <input id="cf-preco" inputMode="decimal" value={precoUnitario} onChange={(e) => setPrecoUnitario(e.target.value)} placeholder="0,00" required />
-            <span>R$</span>
+          <label htmlFor="cf-preco">Preço (R$)</label>
+          <div className="qtd-un">
+            <input id="cf-preco" inputMode="decimal" value={precoTexto} onChange={(e) => setPrecoTexto(e.target.value)} placeholder="0,00" />
+            <select value={precoModo} onChange={(e) => setPrecoModo(e.target.value as Medida | 'total')} aria-label="O preço é">
+              {compativeis(base).map((m, _, todas) => <option key={m} value={m}>/{todas.length === 1 ? rotulo(base) : rotulo(m)}</option>)}
+              <option value="total">total</option>
+            </select>
           </div>
         </div>
       </div>
 
       <div className="total-linha">
-        <span>Total da compra</span>
-        <b>{totalPrevisto > 0 ? brl(totalPrevisto) : '—'}</b>
+        <span>
+          Total da compra
+          {qBase > 0 && precoBase > 0 && isFinite(precoBase) && (
+            <small style={{ display: 'block', fontSize: 11, marginTop: 2 }}>
+              {fmtQtd(qBase, base)} · {custoPor(precoBase, base)}
+            </small>
+          )}
+        </span>
+        <b>{totalPrevisto > 0 && isFinite(totalPrevisto) ? brl(totalPrevisto) : '—'}</b>
       </div>
 
       <button type="submit" className="btn prim" disabled={carregando}>

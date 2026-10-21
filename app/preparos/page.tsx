@@ -3,10 +3,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
 import Sheet from '@/components/Sheet';
+import QtdInput from '@/components/QtdInput';
 import { avisar } from '@/components/Toaster';
 import { IcoBusca, IcoLixo, IcoMais, IcoSeta } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl } from '@/lib/format';
+import { BASES, campoQtd, campoVazio, custoPartes, custoPor, fmtQtd, lerCampo, type CampoQtd, type Medida } from '@/lib/medidas';
 
 type Ingrediente = {
   id: string;
@@ -20,8 +22,6 @@ type Ingrediente = {
 };
 type ItemPreparo = { id: string; insumo_pai_id: string; ingrediente_id: string; quantidade: number; ingredientes?: Ingrediente };
 
-const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
-const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 
 export default function PreparosPage() {
   const supabase = createClient();
@@ -34,16 +34,16 @@ export default function PreparosPage() {
   // novo preparo
   const [novoAberto, setNovoAberto] = useState(false);
   const [novoNome, setNovoNome] = useState('');
-  const [novaMedida, setNovaMedida] = useState('kg');
-  const [novoRendimento, setNovoRendimento] = useState('');
+  const [novaMedida, setNovaMedida] = useState<Medida>('kg');
+  const [novoRendimento, setNovoRendimento] = useState<CampoQtd>({ texto: '', medida: 'kg' });
   const [criando, setCriando] = useState(false);
 
   // receita aberta
   const [aberto, setAberto] = useState<Ingrediente | null>(null);
-  const [rendimento, setRendimento] = useState('');
+  const [rendimento, setRendimento] = useState<CampoQtd>(campoVazio());
   const [novoInsumo, setNovoInsumo] = useState('');
-  const [novaQtd, setNovaQtd] = useState('');
-  const [qtds, setQtds] = useState<Record<string, string>>({});
+  const [novaQtd, setNovaQtd] = useState<CampoQtd>(campoVazio());
+  const [qtds, setQtds] = useState<Record<string, CampoQtd>>({});
   const [salvandoItem, setSalvandoItem] = useState(false);
 
   async function carregarDados() {
@@ -57,7 +57,7 @@ export default function PreparosPage() {
     if (resItens.data) {
       const lista = resItens.data.map((item) => ({ ...item, ingredientes: todos.find((ing) => ing.id === item.ingrediente_id) }));
       setItens(lista);
-      setQtds(Object.fromEntries(lista.map((i) => [i.id, qtd(Number(i.quantidade)).replace(/\./g, '')])));
+      setQtds(Object.fromEntries(lista.map((i) => [i.id, campoQtd(Number(i.quantidade), i.ingredientes?.unidade_medida)])));
     }
     // mantém a janela aberta com os dados novos
     setAberto((a) => (a ? todos.find((i) => i.id === a.id) || null : null));
@@ -65,6 +65,11 @@ export default function PreparosPage() {
   }
 
   useEffect(() => { carregarDados(); }, []);
+
+  // insumo escolhido para adicionar: o campo passa para a medida dele (g, ml ou un)
+  const ingNovo = brutos.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+  const baseNova = ingNovo?.unidade_medida;
+  useEffect(() => { setNovaQtd((q) => ({ ...campoVazio(baseNova), texto: q.texto })); }, [baseNova]);
 
   // mesma conta da view v_custo_ingrediente: (insumos + custo fixo) / rendimento
   const custos = useMemo(() => {
@@ -85,7 +90,7 @@ export default function PreparosPage() {
   async function criarPreparo(e: React.FormEvent) {
     e.preventDefault();
     const nome = novoNome.trim();
-    const rend = paraNumero(novoRendimento);
+    const rend = lerCampo(novoRendimento, novaMedida);
     if (!nome || !(rend > 0)) return avisar('Informe o nome e um rendimento maior que zero.', 'erro');
     if ([...preparos, ...brutos].some((i) => i.nome.toLowerCase().trim() === nome.toLowerCase())) {
       return avisar('Já existe um insumo com esse nome.', 'erro');
@@ -107,23 +112,26 @@ export default function PreparosPage() {
     avisar(`${nome} criado. Agora monte a receita.`);
     setNovoAberto(false);
     setNovoNome('');
-    setNovoRendimento('');
+    setNovoRendimento({ texto: '', medida: novaMedida });
     await carregarDados();
     if (data) abrirReceita(data);
   }
 
   function abrirReceita(p: Ingrediente) {
-    setRendimento(qtd(Number(p.rendimento_receita || 1)).replace(/\./g, ''));
+    setRendimento(campoQtd(Number(p.rendimento_receita || 1), p.unidade_medida));
     setNovoInsumo('');
-    setNovaQtd('');
+    setNovaQtd(campoVazio());
     setAberto(p);
   }
 
   async function salvarRendimento() {
     if (!aberto) return;
-    const valor = paraNumero(rendimento);
-    if (valor === Number(aberto.rendimento_receita || 1)) return;
-    if (!(valor > 0)) return avisar('Rendimento inválido.', 'erro');
+    const valor = lerCampo(rendimento, aberto.unidade_medida);
+    if (Math.abs(valor - Number(aberto.rendimento_receita || 1)) < 1e-9) return;
+    if (!(valor > 0)) {
+      avisar('Rendimento inválido.', 'erro');
+      return setRendimento(campoQtd(Number(aberto.rendimento_receita || 1), aberto.unidade_medida));
+    }
     const { error } = await supabase.from('ingredientes').update({ rendimento_receita: valor }).eq('id', aberto.id);
     if (error) return avisar('Erro ao atualizar: ' + error.message, 'erro');
     avisar('Rendimento atualizado.');
@@ -133,9 +141,9 @@ export default function PreparosPage() {
   async function adicionarInsumo(e: React.FormEvent) {
     e.preventDefault();
     if (!aberto) return;
-    const ing = brutos.find((i) => i.nome.toLowerCase() === novoInsumo.trim().toLowerCase());
+    const ing = ingNovo;
     if (!ing) return avisar('Escolha um insumo da lista.', 'erro');
-    const quantidade = paraNumero(novaQtd);
+    const quantidade = lerCampo(novaQtd, ing.unidade_medida);
     if (!(quantidade > 0)) return avisar('Informe a quantidade usada no lote.', 'erro');
 
     setSalvandoItem(true);
@@ -143,16 +151,17 @@ export default function PreparosPage() {
     setSalvandoItem(false);
     if (error) return avisar('Erro ao adicionar: ' + error.message, 'erro');
     setNovoInsumo('');
-    setNovaQtd('');
+    setNovaQtd(campoVazio());
     carregarDados();
   }
 
   async function salvarQtd(item: ItemPreparo) {
-    const valor = paraNumero(qtds[item.id] || '');
-    if (valor === Number(item.quantidade)) return;
+    const base = item.ingredientes?.unidade_medida;
+    const valor = lerCampo(qtds[item.id], base);
+    if (Math.abs(valor - Number(item.quantidade)) < 1e-9) return;
     if (!(valor > 0)) {
       avisar('Quantidade inválida.', 'erro');
-      return setQtds({ ...qtds, [item.id]: qtd(Number(item.quantidade)) });
+      return setQtds({ ...qtds, [item.id]: campoQtd(Number(item.quantidade), base) });
     }
     const { error } = await supabase.from('preparo_itens').update({ quantidade: valor }).eq('id', item.id);
     if (error) return avisar('Erro ao editar: ' + error.message, 'erro');
@@ -168,6 +177,7 @@ export default function PreparosPage() {
   }
 
   const c = aberto ? custos.get(aberto.id) : undefined;
+  const cuAberto = custoPartes(c?.porUnidade || 0, aberto?.unidade_medida);
   const comp = aberto ? itens.filter((i) => i.insumo_pai_id === aberto.id).sort((a, b) => (a.ingredientes?.nome || '').localeCompare(b.ingredientes?.nome || '', 'pt-BR')) : [];
 
   return (
@@ -204,6 +214,7 @@ export default function PreparosPage() {
           ) : (
             lista.map((p) => {
               const cp = custos.get(p.id)!;
+              const cu = custoPartes(cp.porUnidade, p.unidade_medida);
               return (
                 <button key={p.id} className="item" onClick={() => abrirReceita(p)}>
                   <div className="item-main">
@@ -212,12 +223,12 @@ export default function PreparosPage() {
                       {cp.itens === 0 && <span className="tag o">Montar receita</span>}
                     </div>
                     <div className="item-sub">
-                      Lote rende {qtd(cp.rendimento)} {p.unidade_medida} · custa {brl(cp.lote)}
+                      Lote rende {fmtQtd(cp.rendimento, p.unidade_medida)} · custa {brl(cp.lote)}
                     </div>
                   </div>
                   <div className="item-dir">
-                    <div className="item-val">{brl(cp.porUnidade)}</div>
-                    <div className="item-mini">por {p.unidade_medida}</div>
+                    <div className="item-val">{brl(cu.preco)}</div>
+                    <div className="item-mini">por {cu.medida}</div>
                   </div>
                   <IcoSeta size={16} className="item-chev" />
                 </button>
@@ -248,19 +259,21 @@ export default function PreparosPage() {
           <div className="field2">
             <div className="field">
               <label htmlFor="pr-medida">Medida</label>
-              <select id="pr-medida" value={novaMedida} onChange={(e) => setNovaMedida(e.target.value)}>
-                {['kg', 'g', 'L', 'ml', 'un'].map((m) => <option key={m} value={m}>{m}</option>)}
+              <select id="pr-medida" value={novaMedida} onChange={(e) => {
+                const m = e.target.value as Medida;
+                setNovaMedida(m);
+                setNovoRendimento({ texto: novoRendimento.texto, medida: m });
+              }}>
+                {BASES.map((b) => <option key={b.medida} value={b.medida}>{b.nome}</option>)}
               </select>
             </div>
             <div className="field">
               <label htmlFor="pr-rend">Rendimento do lote</label>
-              <div className="inp-un">
-                <input id="pr-rend" inputMode="decimal" value={novoRendimento} onChange={(e) => setNovoRendimento(e.target.value)} placeholder="Ex: 2,5" required />
-                <span>{novaMedida}</span>
-              </div>
+              <QtdInput id="pr-rend" base={novaMedida} texto={novoRendimento.texto} medida={novoRendimento.medida} placeholder="Ex: 2,5"
+                onChange={(texto, medida) => setNovoRendimento({ texto, medida })} />
             </div>
           </div>
-          <p className="dica">Rendimento = quanto sai de cada lote preparado. Ele divide o custo do lote.</p>
+          <p className="dica">Rendimento = quanto sai de cada lote preparado (ex.: 800 g ou 2,5 kg). Ele divide o custo do lote.</p>
         </form>
       </Sheet>
 
@@ -270,19 +283,17 @@ export default function PreparosPage() {
           <>
             <div className="resumo">
               <div><span>Custo do lote</span><b>{brl(c.lote)}</b></div>
-              <div><span>Rendimento</span><b>{qtd(c.rendimento)} {aberto.unidade_medida}</b></div>
-              <div><span>Custo por {aberto.unidade_medida}</span><b className="o">{brl(c.porUnidade)}</b></div>
+              <div><span>Rendimento</span><b>{fmtQtd(c.rendimento, aberto.unidade_medida)}</b></div>
+              <div><span>Custo por {cuAberto.medida}</span><b className="o">{brl(cuAberto.preco)}</b></div>
             </div>
 
             <div className="field">
               <label htmlFor="rend">Rendimento do lote</label>
-              <div className="inp-un">
-                <input
-                  id="rend" inputMode="decimal" value={rendimento} onChange={(e) => setRendimento(e.target.value)}
-                  onBlur={salvarRendimento} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                />
-                <span>{aberto.unidade_medida}</span>
-              </div>
+              <QtdInput
+                id="rend" base={aberto.unidade_medida} texto={rendimento.texto} medida={rendimento.medida}
+                onChange={(texto, medida) => setRendimento({ texto, medida })}
+                onBlur={salvarRendimento} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
             </div>
 
             <div className="sheet-sec">Insumos do lote</div>
@@ -294,12 +305,13 @@ export default function PreparosPage() {
                   <div className="comp-l" key={item.id}>
                     <div className="item-main">
                       <b>{item.ingredientes?.nome || '—'}</b>
-                      <span>{brl(custoUn)} / {item.ingredientes?.unidade_medida}</span>
+                      <span>{custoPor(custoUn, item.ingredientes?.unidade_medida)}</span>
                     </div>
                     <div className="comp-q">
-                      <input
-                        className="inp" inputMode="decimal" aria-label={`Quantidade de ${item.ingredientes?.nome}`}
-                        value={qtds[item.id] ?? ''} onChange={(e) => setQtds({ ...qtds, [item.id]: e.target.value })}
+                      <QtdInput
+                        base={item.ingredientes?.unidade_medida} rotuloAria={`Quantidade de ${item.ingredientes?.nome}`}
+                        texto={qtds[item.id]?.texto ?? ''} medida={qtds[item.id]?.medida ?? 'un'}
+                        onChange={(texto, medida) => setQtds({ ...qtds, [item.id]: { texto, medida } })}
                         onBlur={() => salvarQtd(item)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                       />
                     </div>
@@ -325,13 +337,14 @@ export default function PreparosPage() {
                 </datalist>
               </div>
               <div className="field">
-                <input inputMode="decimal" value={novaQtd} onChange={(e) => setNovaQtd(e.target.value)} placeholder="Qtd" aria-label="Quantidade" />
+                <QtdInput base={baseNova} texto={novaQtd.texto} medida={novaQtd.medida} placeholder="Qtd" rotuloAria="Quantidade"
+                  onChange={(texto, medida) => setNovaQtd({ texto, medida })} />
               </div>
               <button type="submit" className="bt bt-prim bt-ic" disabled={salvandoItem} aria-label="Adicionar insumo" style={{ height: 48, width: 48 }}>
                 <IcoMais size={20} />
               </button>
             </form>
-            <p className="dica">Quantidade usada em um lote, na medida do insumo.</p>
+            <p className="dica">Quantidade usada em um lote — digite em g ou kg, ml ou L, como for mais prático.</p>
           </>
         )}
       </Sheet>

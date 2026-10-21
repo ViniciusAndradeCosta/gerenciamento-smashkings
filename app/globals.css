@@ -216,6 +216,20 @@ select.inp,.field select{background-image:url("data:image/svg+xml,%3Csvg xmlns='
 .field .inp-un input{padding-right:52px}
 .field .inp-un span{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:700;color:var(--mut)}
 
+/* quantidade + medida (g/kg, ml/L) */
+.qtd-un{display:flex;align-items:stretch;min-width:0;background:var(--surf2);border:1px solid var(--line2);border-radius:12px;transition:border-color .15s}
+.qtd-un:focus-within{border-color:var(--gold)}
+.qtd-un>input{flex:1;min-width:0;width:100%;border:0;border-radius:12px 0 0 12px;background:none;padding:12px 4px 12px 14px;color:var(--txt);font-size:16px;font-family:inherit;outline:none}
+.qtd-un>input::placeholder{color:var(--mut2)}
+.qtd-un>select{flex:none;width:auto;border:0;border-left:1px solid var(--line);border-radius:0 12px 12px 0;background-color:transparent;color:var(--gold);font:700 14px var(--font-sans),sans-serif;
+  padding:0 24px 0 10px;cursor:pointer;outline:none;-webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23f7c915' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.5 5.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 6px center}
+.qtd-un>span{flex:none;align-self:center;padding:0 14px 0 6px;font-size:12px;font-weight:700;color:var(--mut)}
+.comp-q .qtd-un>input{padding:9px 2px 9px 10px;font-size:15px;text-align:right}
+.comp-q .qtd-un>select{padding:0 20px 0 6px;font-size:13px}
+.comp-q .qtd-un>span{padding:0 10px 0 4px}
+
 /* ---------- filtros ---------- */
 .filtros{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 calc(var(--pad) * -1);padding:2px var(--pad)}
@@ -273,13 +287,22 @@ button.item:active{background:rgba(255,255,255,.05)}
 .comp-l:last-child{border-bottom:none}
 .comp-l .item-main b{display:block;font-size:13.5px;font-weight:600}
 .comp-l .item-main span{font-size:11px;color:var(--mut)}
-.comp-q{width:92px;flex:none}
+.comp-q{width:128px;flex:none}
 .comp-q .inp{padding:9px 10px;text-align:right;font-size:15px}
 .comp-c{width:74px;flex:none;text-align:right;font-family:var(--cond);font-size:16px;font-weight:800}
 .add-linha{display:flex;gap:8px;align-items:flex-end}
 .add-linha .field{margin:0}
 .add-linha .field:first-child{flex:1;min-width:0}
-.add-linha .field:nth-child(2){width:96px;flex:none}
+.add-linha .field:nth-child(2){width:132px;flex:none}
+/* celular: nome do insumo numa linha, quantidade e custo na de baixo */
+@media (max-width:560px){
+  .comp-l:has(.comp-q){flex-wrap:wrap;row-gap:8px}
+  .comp-l:has(.comp-q)>.item-main{flex:1 1 100%;display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .comp-l:has(.comp-q) .comp-c{margin-left:auto}
+  form.add-linha{flex-wrap:wrap}
+  form.add-linha .field:first-child{flex:1 1 100%}
+  form.add-linha .field:nth-child(2){flex:1;width:auto}
+}
 
 /* ---------- atalhos (início e menu "Mais") ---------- */
 .atalhos{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}

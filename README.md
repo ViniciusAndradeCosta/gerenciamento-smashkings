@@ -10,6 +10,7 @@ Sistema web **mobile-first** e **instalável no celular** (PWA) para gestão das
 - **CMP automático:** cada compra recalcula o Custo Médio Ponderado do ingrediente e soma ao estoque da unidade (trigger no banco).
 - **Preparos:** molhos e sub-receitas montados a partir dos insumos; o custo por kg/L entra automaticamente nas fichas dos lanches.
 - **Produção (cozinha central):** tela própria (menu Mais) para registrar o que foi produzido (American Cheese, molhos…), descontando os insumos da receita, e **transferir** estoque da produção para as lojas — sai de um lado e entra no outro numa única operação, com histórico. A produção não aparece como loja nas outras telas, mas pode receber compras.
+- **Medidas (g/kg, ml/L):** cada insumo guarda tudo numa medida base (kg, L ou un), mas em compras, fichas, preparos, estoque e produção dá para digitar em g ou kg, ml ou L — o sistema converte (`lib/medidas.ts`) e mostra no formato mais legível (850 g, 2,5 kg). Na nota fiscal, "500 G" num insumo em kg entra como 0,5 kg. A medida de um insumo pode ser trocada em Estoque → Editar insumo (g → kg converte estoque, compras, fichas e preparos juntos).
 - **CMV:** calculado a partir das vendas × custo da ficha técnica de cada produto (a mesma conta nas Fichas, no dashboard e no chat).
 - **Alertas:** itens abaixo do estoque mínimo aparecem no dashboard.
 - **Nota fiscal com IA:** foto ou PDF da nota → o Gemini lê os itens → você revisa e lança tudo como compra.
@@ -34,7 +35,8 @@ Veja o guia detalhado em **SETUP.md**. Resumo:
 app/            telas (dashboard, estoque, compras, cmv, comparativo, produtos, fichas, preparos, login)
 app/api/        extrair-nf — leitura de nota fiscal com o Gemini
 app/chat/       actions.ts — Server Action do assistente (resumo do banco + Gemini)
-components/     AppNav, PageHeader, Sheet (janela), Toaster (avisos), UnitSwitcher, CompraForm, ImportarNotaForm, ChatWidget, ChatAssistente, SW
+components/     AppNav, PageHeader, Sheet (janela), Toaster (avisos), QtdInput (quantidade + medida), UnitSwitcher, CompraForm, ImportarNotaForm, ChatWidget, ChatAssistente, SW
+lib/medidas.ts  conversão e exibição de medidas (g/kg, ml/L)
 lib/supabase/   clientes Supabase (browser, server, middleware)
 supabase/       schema.sql (banco, idempotente) + seed.sql (dados de exemplo, só para teste)
 public/         PWA (manifest, service worker, ícone)
@@ -44,6 +46,7 @@ public/         PWA (manifest, service worker, ícone)
 
 - **Vendas:** ainda não há tela nem integração para lançar vendas. Sem vendas, o faturamento e o CMV do dashboard ficam zerados. Próximo passo natural: importar os relatórios do Consumer, Goomer e iFood (os produtos já têm os campos de ID de cada um).
 - Baixa automática do estoque pelas vendas (hoje o estoque sobe com as compras e é ajustado à mão na contagem)
+- Embalagens: comprar por caixa/fardo (ex.: 1 cx = 80 un) e o estoque entrar em unidades
 - CMP separado por unidade no CMV (hoje as duas unidades usam o mesmo custo de ficha)
 - ~~Cadastro de ingredientes/fichas pela interface~~ ✅ feito
 - ~~Leitura real de nota fiscal com IA~~ ✅ feito

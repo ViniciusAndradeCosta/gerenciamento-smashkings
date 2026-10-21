@@ -251,6 +251,26 @@ drop view if exists v_valor_estoque;
 drop view if exists v_alertas_estoque;
 drop view if exists v_custo_ingrediente;
 
+-- Mais casas decimais nas quantidades: com a digitação em gramas, receitas
+-- usam frações pequenas de kg (0,4 g de sal = 0,0004 kg). Só aumenta a
+-- precisão; precisa rodar com as views removidas (elas usam essas colunas).
+do $$ declare r record; begin
+  for r in select * from (values
+      ('ficha_itens', 'quantidade', 16, 6),
+      ('preparo_itens', 'quantidade', 16, 6),
+      ('estoque', 'quantidade', 16, 4),
+      ('estoque', 'estoque_minimo', 16, 4),
+      ('ingredientes', 'estoque_minimo', 16, 4)
+    ) as v(tabela, coluna, prec, escala)
+  loop
+    if exists (select 1 from information_schema.columns c
+               where c.table_schema = 'public' and c.table_name = r.tabela and c.column_name = r.coluna
+                 and c.data_type = 'numeric' and c.numeric_scale is not null and c.numeric_scale < r.escala) then
+      execute format('alter table public.%I alter column %I type numeric(%s,%s)', r.tabela, r.coluna, r.prec, r.escala);
+    end if;
+  end loop;
+end $$;
+
 -- Custo unitário de cada insumo:
 --  • comprado: CMP global (ingredientes.custo_medio)
 --  • preparo/sub-receita: (insumos do lote + custo fixo do lote) / rendimento
@@ -500,3 +520,54 @@ create policy "producoes_admin" on producoes for all to authenticated using (sou
 create policy "transferencias_ver" on transferencias for select to authenticated
   using (sou_admin() or (tenho_acesso() and (origem_id = minha_unidade() or destino_id = minha_unidade())));
 create policy "transferencias_admin" on transferencias for all to authenticated using (sou_admin()) with check (sou_admin());
+
+-- 15. MEDIDAS
+-- Cada insumo guarda tudo numa medida base (kg, g, l, ml ou un); a tela deixa
+-- digitar em g ou kg, ml ou L e converte. Aqui: padroniza os nomes das
+-- medidas (UN, Kg, KILO… → un, kg) e permite trocar a medida de um insumo.
+update ingredientes set unidade_medida = case lower(trim(coalesce(unidade_medida, 'un')))
+  when 'kgs' then 'kg' when 'quilo' then 'kg' when 'quilos' then 'kg' when 'kilo' then 'kg' when 'kilos' then 'kg'
+  when 'gr' then 'g' when 'grs' then 'g' when 'grama' then 'g' when 'gramas' then 'g'
+  when 'lt' then 'l' when 'lts' then 'l' when 'litro' then 'l' when 'litros' then 'l'
+  when 'mls' then 'ml'
+  when 'und' then 'un' when 'unid' then 'un' when 'unidade' then 'un' when 'unidades' then 'un' when 'u' then 'un'
+  else lower(trim(coalesce(unidade_medida, 'un'))) end;
+
+-- Troca a medida de um insumo. Na mesma família (kg ↔ g, L ↔ ml) converte
+-- estoque, compras, fichas, preparos e histórico; entre famílias diferentes
+-- (un → kg, para corrigir um cadastro errado) só troca o rótulo.
+create or replace function public.trocar_medida_insumo(p_ingrediente uuid, p_nova text)
+returns void language plpgsql set search_path = public as $$
+declare v_antiga text; v_nova text := lower(trim(p_nova)); f numeric := 1; fa numeric; fn numeric; ga text; gn text;
+begin
+  if not sou_admin() then raise exception 'Somente o administrador troca a medida de um insumo.'; end if;
+  select lower(trim(unidade_medida)) into v_antiga from ingredientes where id = p_ingrediente for update;
+  if not found then raise exception 'Insumo não encontrado.'; end if;
+
+  select v.fam, v.fator into ga, fa
+    from (values ('kg', 'massa', 1000), ('g', 'massa', 1), ('l', 'volume', 1000), ('ml', 'volume', 1), ('un', 'contagem', 1)) as v(m, fam, fator)
+   where v.m = v_antiga;
+  select v.fam, v.fator into gn, fn
+    from (values ('kg', 'massa', 1000), ('g', 'massa', 1), ('l', 'volume', 1000), ('ml', 'volume', 1), ('un', 'contagem', 1)) as v(m, fam, fator)
+   where v.m = v_nova;
+  if gn is null then raise exception 'Medida inválida: use kg, g, L, ml ou un.'; end if;
+
+  if ga = gn and fa <> fn then f := fa / fn; end if;
+  if f <> 1 then
+    update estoque set quantidade = quantidade * f, estoque_minimo = estoque_minimo * f, custo_medio = custo_medio / f
+     where ingrediente_id = p_ingrediente;
+    update compras set quantidade = quantidade * f, preco_unitario = preco_unitario / f
+     where ingrediente_id = p_ingrediente and quantidade > 0;
+    update ficha_itens set quantidade = quantidade * f where ingrediente_id = p_ingrediente;
+    update preparo_itens set quantidade = quantidade * f where ingrediente_id = p_ingrediente;
+    update producoes set quantidade = quantidade * f where ingrediente_id = p_ingrediente;
+    update transferencias set quantidade = quantidade * f where ingrediente_id = p_ingrediente;
+  end if;
+
+  update ingredientes set
+    unidade_medida = v_nova,
+    custo_medio = custo_medio / f,
+    estoque_minimo = estoque_minimo * f,
+    rendimento_receita = case when e_produzido_internamente then rendimento_receita * f else rendimento_receita end
+  where id = p_ingrediente;
+end; $$;

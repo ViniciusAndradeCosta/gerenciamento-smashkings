@@ -7,11 +7,9 @@ import ImportarNotaForm from '@/components/ImportarNotaForm';
 import { IcoAjuste, IcoNota } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl } from '@/lib/format';
+import { fmtQtd } from '@/lib/medidas';
 
 export const dynamic = 'force-dynamic';
-
-/** Quantidade sem zeros sobrando: 14, 0,42, 1,5 */
-const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 
 export default async function Compras({ searchParams }: { searchParams: Promise<{ u?: string; modo?: string }> }) {
   const { u, modo } = await searchParams;
@@ -87,7 +85,7 @@ export default async function Compras({ searchParams }: { searchParams: Promise<
                   <div className="item-main">
                     <div className="item-tit">{c.ingredientes?.nome || '—'}</div>
                     <div className="item-sub">
-                      {qtd(Number(c.quantidade))} {c.ingredientes?.unidade_medida} · {c.fornecedores?.nome || 'sem fornecedor'}
+                      {fmtQtd(Number(c.quantidade), c.ingredientes?.unidade_medida)} · {c.fornecedores?.nome || 'sem fornecedor'}
                       {c.origem === 'nota_fiscal' && <> · <span style={{ color: 'var(--gold)' }}>nota fiscal</span></>}
                     </div>
                   </div>

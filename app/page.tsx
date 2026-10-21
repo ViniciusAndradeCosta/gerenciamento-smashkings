@@ -6,6 +6,7 @@ import UnitSwitcher from '@/components/UnitSwitcher';
 import { IcoCompras, IcoPedidos, IcoCmv, IcoEstoque, IcoNota, IcoProducao } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/server';
 import { brl, brlCurto, num, pct } from '@/lib/format';
+import { fmtQtd } from '@/lib/medidas';
 import { hoje, ontem, inicioDoMes, saudacao } from '@/lib/date';
 
 export const dynamic = 'force-dynamic';
@@ -163,11 +164,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     <span className="adot" style={{ background: a.status === 'baixo' ? 'var(--gold)' : 'var(--red)' }} />
                     <div className="ab">
                       <b>{a.ingrediente}</b>
-                      <span>mín {num(a.estoque_minimo, 2)} {a.unidade_medida}</span>
+                      <span>mín {fmtQtd(Number(a.estoque_minimo), a.unidade_medida)}</span>
                     </div>
                     <div className="ar">
                       <div className="aq" style={{ color: a.status === 'baixo' ? 'var(--gold)' : 'var(--red)' }}>
-                        {num(a.quantidade, 2)} {a.unidade_medida}
+                        {fmtQtd(Number(a.quantidade), a.unidade_medida)}
                       </div>
                       {!alvo && <div className="au">{a.unidade_nome}</div>}
                     </div>

@@ -3,10 +3,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
 import Sheet from '@/components/Sheet';
+import QtdInput from '@/components/QtdInput';
 import { avisar } from '@/components/Toaster';
-import { IcoBusca, IcoEstoque, IcoPreparos, IcoSeta } from '@/components/Icons';
+import { IcoBusca, IcoEstoque, IcoPreparos, IcoSeta, IcoAjuste } from '@/components/Icons';
 import { createClient } from '@/lib/supabase/client';
 import { brl } from '@/lib/format';
+import { BASES, campoQtd, custoPor, fmtQtd, lerCampo, mesmaFamilia, normalizar, qtdPartes, rotulo, textoEm, type CampoQtd, type Medida } from '@/lib/medidas';
 
 type Unidade = { id: string; nome: string; codigo?: string; cor?: string; e_producao?: boolean };
 type Ingrediente = { id: string; nome: string; unidade_medida: string; custo_medio: number; e_produzido_internamente: boolean; estoque_minimo?: number };
@@ -18,10 +20,6 @@ const STATUS: Record<Status, { txt: string; tag: string; ordem: number }> = {
   acabando: { txt: 'Acabando', tag: 'o', ordem: 1 },
   normal: { txt: 'Normal', tag: 'g', ordem: 2 },
 };
-
-/** Quantidade sem zeros sobrando: 14, 0,42, 1,5 */
-const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
-const paraNumero = (s: string) => Number(String(s).replace(',', '.'));
 
 export default function EstoquePage() {
   const supabase = createClient();
@@ -35,10 +33,13 @@ export default function EstoquePage() {
   const [tipo, setTipo] = useState<'insumos' | 'preparos'>('insumos');
   const [busca, setBusca] = useState('');
 
-  // ajuste (janela)
+  // janela do insumo: ajustar estoque ou editar o cadastro
   const [ajustando, setAjustando] = useState<Ingrediente | null>(null);
-  const [editQtds, setEditQtds] = useState<Record<string, string>>({});
-  const [editMinimo, setEditMinimo] = useState('');
+  const [aba, setAba] = useState<'ajustar' | 'editar'>('ajustar');
+  const [editQtds, setEditQtds] = useState<Record<string, CampoQtd>>({});
+  const [editMinimo, setEditMinimo] = useState<CampoQtd>({ texto: '', medida: 'un' });
+  const [editNome, setEditNome] = useState('');
+  const [editMedida, setEditMedida] = useState<Medida>('un');
   const [salvando, setSalvando] = useState(false);
 
   async function carregarDados() {
@@ -91,17 +92,21 @@ export default function EstoquePage() {
   const valorTotal = linhas.reduce((s, l) => s + l.valor, 0);
   const emAlerta = linhas.filter((l) => l.status !== 'normal').length;
 
-  function abrirAjuste(ing: Ingrediente) {
-    const mapa: Record<string, string> = {};
-    lojas.forEach((u) => { mapa[u.id] = qtd(qtdNaUnidade(ing.id, u.id)).replace(/\./g, ''); });
+  function abrirInsumo(ing: Ingrediente) {
+    const mapa: Record<string, CampoQtd> = {};
+    lojas.forEach((u) => { mapa[u.id] = campoQtd(qtdNaUnidade(ing.id, u.id), ing.unidade_medida); });
     setEditQtds(mapa);
-    setEditMinimo(String(ing.estoque_minimo || 0).replace('.', ','));
+    setEditMinimo(campoQtd(Number(ing.estoque_minimo || 0), ing.unidade_medida));
+    setEditNome(ing.nome);
+    setEditMedida(normalizar(ing.unidade_medida));
+    setAba('ajustar');
     setAjustando(ing);
   }
 
   async function salvarAjuste() {
     if (!ajustando) return;
     const ingredienteId = ajustando.id;
+    const base = ajustando.unidade_medida;
     // O supabase-js não lança exceção: devolve { error }. Sem checar, uma
     // falha (ex.: gerente ajustando outra unidade) parecia ter sido salva.
     const conferir = ({ error }: { error: { message: string } | null }) => {
@@ -109,23 +114,26 @@ export default function EstoquePage() {
     };
 
     const alvo = unidadeFiltro === 'Todas' ? lojas : lojas.filter((u) => u.id === unidadeFiltro);
+    const novos = new Map<string, number>();
     for (const u of alvo) {
-      const val = paraNumero(editQtds[u.id] || '0');
+      const val = lerCampo(editQtds[u.id], base, 0);
       if (isNaN(val) || val < 0) { avisar(`Quantidade inválida em ${u.nome}.`, 'erro'); return; }
+      novos.set(u.id, val);
     }
+    const minVal = lerCampo(editMinimo, base, 0);
+    if (isNaN(minVal) || minVal < 0) return avisar('Mínimo inválido.', 'erro');
 
     setSalvando(true);
     try {
-      const minVal = paraNumero(editMinimo);
-      if (!isNaN(minVal) && minVal >= 0 && minVal !== Number(ajustando.estoque_minimo || 0)) {
+      if (Math.abs(minVal - Number(ajustando.estoque_minimo || 0)) > 1e-9) {
         conferir(await supabase.from('ingredientes').update({ estoque_minimo: minVal }).eq('id', ingredienteId));
       }
 
       for (const u of alvo) {
-        const val = paraNumero(editQtds[u.id] || '0');
+        const val = novos.get(u.id)!;
         const match = estoques.find((e) => e.unidade_id === u.id && e.ingrediente_id === ingredienteId);
         if (match) {
-          if (Number(match.quantidade) === val) continue;
+          if (Math.abs(Number(match.quantidade) - val) < 1e-9) continue;
           conferir(await supabase.from('estoque').update({ quantidade: val }).eq('unidade_id', u.id).eq('ingrediente_id', ingredienteId));
         } else {
           if (val === 0) continue;
@@ -143,8 +151,43 @@ export default function EstoquePage() {
     }
   }
 
+  async function salvarCadastro() {
+    if (!ajustando) return;
+    const nome = editNome.trim();
+    if (!nome) return avisar('Informe o nome do insumo.', 'erro');
+    if (nome.toLowerCase() !== ajustando.nome.toLowerCase() && ingredientes.some((i) => i.id !== ajustando.id && i.nome.toLowerCase() === nome.toLowerCase())) {
+      return avisar('Já existe outro insumo com esse nome.', 'erro');
+    }
+
+    setSalvando(true);
+    try {
+      if (nome !== ajustando.nome) {
+        const { error } = await supabase.from('ingredientes').update({ nome }).eq('id', ajustando.id);
+        if (error) throw error;
+      }
+      if (editMedida !== normalizar(ajustando.unidade_medida)) {
+        const { error } = await supabase.rpc('trocar_medida_insumo', { p_ingrediente: ajustando.id, p_nova: editMedida });
+        if (error) throw error;
+      }
+      avisar('Insumo atualizado.');
+      setAjustando(null);
+      await carregarDados();
+    } catch (err: any) {
+      avisar('Erro ao salvar: ' + err.message, 'erro');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   const unidadeAtual = unidadeFiltro === 'Todas' ? null : unidadeDe(unidadeFiltro);
   const unidadesDoAjuste = unidadeFiltro === 'Todas' ? lojas : lojas.filter((u) => u.id === unidadeFiltro);
+  const medidaAtual = ajustando ? normalizar(ajustando.unidade_medida) : 'un';
+  const trocaMedida = !!ajustando && editMedida !== medidaAtual;
+  // bases kg, L e un (+ a atual, se o insumo vier de antes com g ou ml):
+  // converter sempre para a medida maior não perde precisão nos custos
+  const opcoesMedida = BASES.some((b) => b.medida === medidaAtual)
+    ? BASES
+    : [{ medida: medidaAtual, nome: `${ajustando ? rotulo(ajustando.unidade_medida) : medidaAtual} (atual)` }, ...BASES];
 
   return (
     <>
@@ -188,79 +231,119 @@ export default function EstoquePage() {
           ) : linhas.length === 0 ? (
             <div className="vazio">{busca ? `Nada encontrado para "${busca}".` : tipo === 'preparos' ? 'Nenhum preparo cadastrado ainda.' : 'Nenhum insumo cadastrado ainda. Eles aparecem aqui ao registrar compras.'}</div>
           ) : (
-            linhas.map(({ ing, doIngrediente, qtdAtual, minimo, status, valor }) => (
-              <button key={ing.id} className="item" onClick={() => abrirAjuste(ing)}>
-                <div className="item-main">
-                  <div className="item-tit">
-                    {ing.nome}
-                    <span className={'tag ' + STATUS[status].tag}>{STATUS[status].txt}</span>
-                  </div>
-                  <div className="item-sub">
-                    {brl(Number(ing.custo_medio || 0))} / {ing.unidade_medida}
-                    {minimo > 0 && <> · mínimo {qtd(minimo)} {ing.unidade_medida}</>}
-                  </div>
-                  {unidadeFiltro === 'Todas' && doIngrediente.some((e) => Number(e.quantidade) > 0) && (
-                    <div className="pilulas">
-                      {doIngrediente.filter((e) => Number(e.quantidade) > 0).map((e) => {
-                        const u = unidadeDe(e.unidade_id);
-                        return u ? (
-                          <span key={e.unidade_id} className="pilula">
-                            <span className="ud" style={{ background: u.cor || 'var(--gold)' }} />
-                            {u.nome} <b>{qtd(Number(e.quantidade))}</b>
-                          </span>
-                        ) : null;
-                      })}
+            linhas.map(({ ing, doIngrediente, qtdAtual, minimo, status, valor }) => {
+              const partes = qtdPartes(qtdAtual, ing.unidade_medida);
+              return (
+                <button key={ing.id} className="item" onClick={() => abrirInsumo(ing)}>
+                  <div className="item-main">
+                    <div className="item-tit">
+                      {ing.nome}
+                      <span className={'tag ' + STATUS[status].tag}>{STATUS[status].txt}</span>
                     </div>
-                  )}
-                </div>
-                <div className="item-dir">
-                  <div className="item-val" style={{ color: status === 'esgotado' ? 'var(--red)' : status === 'acabando' ? 'var(--gold)' : undefined }}>
-                    {qtd(qtdAtual)}<small>{ing.unidade_medida}</small>
+                    <div className="item-sub">
+                      {custoPor(Number(ing.custo_medio || 0), ing.unidade_medida)}
+                      {minimo > 0 && <> · mínimo {fmtQtd(minimo, ing.unidade_medida)}</>}
+                    </div>
+                    {unidadeFiltro === 'Todas' && doIngrediente.some((e) => Number(e.quantidade) > 0) && (
+                      <div className="pilulas">
+                        {doIngrediente.filter((e) => Number(e.quantidade) > 0).map((e) => {
+                          const u = unidadeDe(e.unidade_id);
+                          return u ? (
+                            <span key={e.unidade_id} className="pilula">
+                              <span className="ud" style={{ background: u.cor || 'var(--gold)' }} />
+                              {u.nome} <b>{fmtQtd(Number(e.quantidade), ing.unidade_medida)}</b>
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <div className="item-mini">{brl(valor)}</div>
-                </div>
-                <IcoSeta size={16} className="item-chev" />
-              </button>
-            ))
+                  <div className="item-dir">
+                    <div className="item-val" style={{ color: status === 'esgotado' ? 'var(--red)' : status === 'acabando' ? 'var(--gold)' : undefined }}>
+                      {partes.numero}<small>{partes.medida}</small>
+                    </div>
+                    <div className="item-mini">{brl(valor)}</div>
+                  </div>
+                  <IcoSeta size={16} className="item-chev" />
+                </button>
+              );
+            })
           )}
         </div>
       </div>
 
       <Sheet
         aberto={!!ajustando}
-        titulo="Ajustar estoque"
-        subtitulo={ajustando ? `${ajustando.nome} · em ${ajustando.unidade_medida}` : ''}
+        titulo={ajustando?.nome || ''}
+        subtitulo={ajustando ? `Controlado em ${rotulo(ajustando.unidade_medida)}` : ''}
         onFechar={() => setAjustando(null)}
         rodape={
           <>
             <button className="bt bt-sec" onClick={() => setAjustando(null)}>Cancelar</button>
-            <button className="bt bt-prim" onClick={salvarAjuste} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>
+            {aba === 'ajustar'
+              ? <button className="bt bt-prim" onClick={salvarAjuste} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar estoque'}</button>
+              : <button className="bt bt-prim" onClick={salvarCadastro} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar insumo'}</button>}
           </>
         }
       >
         {ajustando && (
           <>
-            <div className="sheet-sec">Quantidade contada</div>
-            {unidadesDoAjuste.map((u) => (
-              <div className="field" key={u.id}>
-                <label htmlFor={'q-' + u.id}>
-                  <span className="ud-inline" style={{ background: u.cor || 'var(--gold)' }} /> {u.nome}
-                </label>
-                <div className="inp-un">
-                  <input id={'q-' + u.id} inputMode="decimal" value={editQtds[u.id] ?? ''} onChange={(e) => setEditQtds({ ...editQtds, [u.id]: e.target.value })} />
-                  <span>{ajustando.unidade_medida}</span>
-                </div>
-              </div>
-            ))}
-            <div className="sheet-sec" style={{ marginTop: 18 }}>Alerta</div>
-            <div className="field">
-              <label htmlFor="minimo">Avisar quando ficar abaixo de</label>
-              <div className="inp-un">
-                <input id="minimo" inputMode="decimal" value={editMinimo} onChange={(e) => setEditMinimo(e.target.value)} placeholder="Ex: 5" />
-                <span>{ajustando.unidade_medida}</span>
-              </div>
-              <p className="dica">O mesmo mínimo vale para todas as unidades. Deixe 0 para não avisar.</p>
+            <div className="seg" role="tablist" style={{ marginBottom: 16 }}>
+              <button role="tab" aria-selected={aba === 'ajustar'} className={aba === 'ajustar' ? 'act' : ''} onClick={() => setAba('ajustar')}>
+                <IcoEstoque size={16} /> Ajustar estoque
+              </button>
+              <button role="tab" aria-selected={aba === 'editar'} className={aba === 'editar' ? 'act' : ''} onClick={() => setAba('editar')}>
+                <IcoAjuste size={16} /> Editar insumo
+              </button>
             </div>
+
+            {aba === 'ajustar' ? (
+              <>
+                <div className="sheet-sec">Quantidade contada</div>
+                {unidadesDoAjuste.map((u) => (
+                  <div className="field" key={u.id}>
+                    <label htmlFor={'q-' + u.id}>
+                      <span className="ud-inline" style={{ background: u.cor || 'var(--gold)' }} /> {u.nome}
+                    </label>
+                    <QtdInput
+                      id={'q-' + u.id} base={ajustando.unidade_medida}
+                      texto={editQtds[u.id]?.texto ?? ''} medida={editQtds[u.id]?.medida ?? medidaAtual}
+                      onChange={(texto, medida) => setEditQtds({ ...editQtds, [u.id]: { texto, medida } })}
+                    />
+                  </div>
+                ))}
+                <div className="sheet-sec" style={{ marginTop: 18 }}>Alerta</div>
+                <div className="field">
+                  <label htmlFor="minimo">Avisar quando ficar abaixo de</label>
+                  <QtdInput id="minimo" base={ajustando.unidade_medida} texto={editMinimo.texto} medida={editMinimo.medida}
+                    placeholder="Ex: 5" onChange={(texto, medida) => setEditMinimo({ texto, medida })} />
+                  <p className="dica">O mesmo mínimo vale para todas as lojas. Deixe 0 para não avisar.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor="ed-nome">Nome</label>
+                  <input id="ed-nome" value={editNome} onChange={(e) => setEditNome(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="ed-medida">Medida em que é controlado</label>
+                  <select id="ed-medida" value={editMedida} onChange={(e) => setEditMedida(e.target.value as Medida)}>
+                    {opcoesMedida.map((m) => <option key={m.medida} value={m.medida}>{m.nome}</option>)}
+                  </select>
+                  {trocaMedida && (mesmaFamilia(medidaAtual, editMedida) ? (
+                    <p className="dica" style={{ color: 'var(--grn)' }}>
+                      Estoque, compras, fichas e preparos serão convertidos: 1.000 {rotulo(medidaAtual)} viram {textoEm(1000, medidaAtual, editMedida)} {rotulo(editMedida)}.
+                    </p>
+                  ) : (
+                    <p className="dica" style={{ color: 'var(--red)' }}>
+                      De {rotulo(medidaAtual)} para {rotulo(editMedida)} não dá para converter: só o rótulo muda. Use para corrigir um cadastro errado e confira o estoque e as fichas depois.
+                    </p>
+                  ))}
+                  {!trocaMedida && <p className="dica">Na hora de lançar, dá para digitar em g ou kg, ml ou L — não precisa mudar a medida para isso.</p>}
+                </div>
+              </>
+            )}
           </>
         )}
       </Sheet>

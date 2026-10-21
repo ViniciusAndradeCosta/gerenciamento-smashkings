@@ -3,9 +3,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { brl, num, pct } from '@/lib/format';
 import { hoje, ontem, inicioDoMes } from '@/lib/date';
+import { fmtQtd } from '@/lib/medidas';
 
-/** Quantidade sem zeros sobrando: 14 un, 0,42 kg. */
-const qtd = (v: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 }).format(v || 0);
 
 export type Mensagem = { autor: 'user' | 'assistant'; texto: string };
 export type Resposta =
@@ -127,7 +126,7 @@ function estoquePorInsumo(itens: Resumo['estoqueItens']) {
 function resumoTexto(r: Resumo): string {
   const alertas = r.alertas.length
     ? r.alertas
-        .map((a) => `  - ${a.ingrediente} (${a.unidade}): ${num(a.quantidade, 2)} ${a.medida}, mínimo ${num(a.minimo, 2)} — ${a.status}`)
+        .map((a) => `  - ${a.ingrediente} (${a.unidade}): ${fmtQtd(a.quantidade, a.medida)}, mínimo ${fmtQtd(a.minimo, a.medida)} — ${a.status}`)
         .join('\n')
     : '  (nenhum item abaixo do mínimo)';
   const unidades = r.porUnidade
@@ -138,7 +137,7 @@ function resumoTexto(r: Resumo): string {
     .join('\n');
   const insumos = Array.from(estoquePorInsumo(r.estoqueItens))
     .slice(0, 300)
-    .map(([nome, itens]) => `  - ${nome}: ${itens.map((i) => `${i.unidade} ${qtd(i.quantidade)} ${i.medida}`).join('; ')}`)
+    .map(([nome, itens]) => `  - ${nome}: ${itens.map((i) => `${i.unidade} ${fmtQtd(i.quantidade, i.medida)}`).join('; ')}`)
     .join('\n') || '  (nenhum insumo em estoque)';
 
   return `DADOS ATUAIS DA SMASHKINGS (use apenas estes números):
@@ -277,9 +276,9 @@ function respostaLocal(pergunta: string, r: Resumo): string {
       const itens = grupos.get(nome)!.filter((i) => !unidadeCitada || i.unidade === unidadeCitada.nome);
       if (!itens.length) return `• ${nome}: sem estoque registrado na ${unidadeCitada!.nome}`;
       const medida = itens[0].medida;
-      if (itens.length === 1) return `• ${nome}: ${qtd(itens[0].quantidade)} ${medida} na ${itens[0].unidade}`;
+      if (itens.length === 1) return `• ${nome}: ${fmtQtd(itens[0].quantidade, medida)} na ${itens[0].unidade}`;
       const total = itens.reduce((s, i) => s + i.quantidade, 0);
-      return `• ${nome}: ${itens.map((i) => `${i.unidade} ${qtd(i.quantidade)} ${medida}`).join(' · ')} (total ${qtd(total)} ${medida})`;
+      return `• ${nome}: ${itens.map((i) => `${i.unidade} ${fmtQtd(i.quantidade, medida)}`).join(' · ')} (total ${fmtQtd(total, medida)})`;
     });
     return `Estoque atual:\n${linhas.join('\n')}`;
   }
@@ -287,7 +286,7 @@ function respostaLocal(pergunta: string, r: Resumo): string {
     if (!r.alertas.length) return 'Nenhum item está abaixo do estoque mínimo. Tudo certo por aqui. ✅';
     const lista = r.alertas
       .slice(0, 8)
-      .map((a) => `• ${a.ingrediente} (${a.unidade}): ${num(a.quantidade, 2)} ${a.medida} — mínimo ${num(a.minimo, 2)}`)
+      .map((a) => `• ${a.ingrediente} (${a.unidade}): ${fmtQtd(a.quantidade, a.medida)} — mínimo ${fmtQtd(a.minimo, a.medida)}`)
       .join('\n');
     return `Itens em alerta de estoque:\n${lista}`;
   }
